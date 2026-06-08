@@ -62,11 +62,13 @@ Each ships something usable. Order is deliberate: early steps build exactly the
 infrastructure later steps need.
 
 ### 0 — Project init & de-risking ✅
+
 - [x] Inspect scaffold; confirm toolchain (Rust 1.96, Bun 1.2.21, Tauri 2).
 - [x] Verify WebGPU works in the Tauri webview (throwaway probe).
 - [x] Choose stack: frontend WebGPU + mediabunny; Rust as plumbing.
 
 ### 1 — Load a video & step frame by frame (in progress)
+
 - [x] `FrameSource` spine interface + ownership/seek design.
 - [x] `MediabunnyFrameSource.open()` — demux, timestamp table, metadata, naive cache.
 - [ ] **1a harness:** drop-zone → open → draw current frame to a 2D canvas;
@@ -79,31 +81,38 @@ infrastructure later steps need.
       the frame as an external texture. _(Nino drives; Claude guides/reviews.)_
 
 ### 2 — Manual tracker
+
 - [ ] Add a tracker (a point/marker) on a frame; store its position.
 - [ ] Move it across frames; data model for tracks over time.
 - [ ] (Decide coded-vs-display coords here.)
 
 ### 3 — Onion-skinning
+
 - [ ] Sample N frames (`getFrames`) and blend them in a shader.
 - [ ] Controls: how many frames, opacity falloff, before/after.
 
 ### 4 — Automatic tracking
+
 - [ ] GPU correlation / pattern match around a tracker to follow it.
 - [ ] Compute-shader track begins here (Surma's "All the cores, none of the canvas").
 
 ### 5 — Export to Blender
+
 - [ ] Emit tracking data in a format Blender's movie clip editor can ingest
       (frame-indexed, using `frameRate`).
 
 ### 6 — Camera solver
+
 - [ ] Recover 3D camera path from 2D tracks (bundle adjustment). **Rust lives here.**
 
 ### 7 — Stretch
+
 - [ ] Object solvers, deeper math (trig, geometry), whatever the sky permits.
 
 ## Learning resources (sequenced to current work)
 
 For the 1b WebGPU renderer, in order:
+
 1. [WebGPU Fundamentals](https://webgpufundamentals.org/) — "Fundamentals" +
    "Inter-stage Variables" (device, pipeline, fullscreen-triangle).
 2. WebGPU Fundamentals — "Textures" → "Importing Video" (samplers, bind groups,

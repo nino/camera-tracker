@@ -1,0 +1,10 @@
+# Dependencies & build output
+node_modules
+dist
+coverage
+
+# Lockfiles
+bun.lock
+
+# Rust / Tauri side — managed separately, not part of the JS formatting domain
+src-tauri
