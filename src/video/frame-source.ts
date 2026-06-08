@@ -30,36 +30,36 @@ import type { VideoSample } from "mediabunny";
  *    wrong frame — silent death for a frame-accurate tracking tool.
  */
 export interface FrameSource {
-  readonly metadata: VideoMetadata;
+   readonly metadata: VideoMetadata;
 
-  /**
-   * Frame `index` (0-based), decoded on demand and cached. Throws if `index` is
-   * out of range. See ownership rules above: borrow the sample, don't close it.
-   */
-  getFrame(index: number): Promise<VideoSample>;
+   /**
+    * Frame `index` (0-based), decoded on demand and cached. Throws if `index` is
+    * out of range. See ownership rules above: borrow the sample, don't close it.
+    */
+   getFrame(index: number): Promise<VideoSample>;
 
-  /**
-   * Several frames at once — the access pattern onion-skinning needs. Same
-   * ownership rules. All returned samples are valid simultaneously.
-   */
-  getFrames(indices: readonly number[]): Promise<VideoSample[]>;
+   /**
+    * Several frames at once — the access pattern onion-skinning needs. Same
+    * ownership rules. All returned samples are valid simultaneously.
+    */
+   getFrames(indices: readonly number[]): Promise<VideoSample[]>;
 
-  /** Close every cached sample and release the decoder. */
-  dispose(): void;
+   /** Close every cached sample and release the decoder. */
+   dispose(): void;
 }
 
 export interface VideoMetadata {
-  /** Total number of frames (= number of video packets). */
-  readonly frameCount: number;
-  /** Display width in pixels (after pixel-aspect + rotation). */
-  readonly width: number;
-  /** Display height in pixels (after pixel-aspect + rotation). */
-  readonly height: number;
-  /**
-   * Nominal frames per second. Metadata for the UI timecode and Blender export
-   * only — NOT used for seeking (see design note 3).
-   */
-  readonly frameRate: number;
-  /** Total duration in seconds. */
-  readonly duration: number;
+   /** Total number of frames (= number of video packets). */
+   readonly frameCount: number;
+   /** Display width in pixels (after pixel-aspect + rotation). */
+   readonly width: number;
+   /** Display height in pixels (after pixel-aspect + rotation). */
+   readonly height: number;
+   /**
+    * Nominal frames per second. Metadata for the UI timecode and Blender export
+    * only — NOT used for seeking (see design note 3).
+    */
+   readonly frameRate: number;
+   /** Total duration in seconds. */
+   readonly duration: number;
 }
