@@ -2,21 +2,21 @@
 
 A desktop camera-tracking (VFX match-move) tool whose distinguishing feature is
 **onion-skinning**: superimpose several video frames so you can nudge a tracker
-until features line up exactly, for precision. Built as a place to learn WebGPU
-and Rust, and to find a good balance between hand-writing code for the joy of it
-and using AI for velocity.
+until features line up exactly, for precision. Built on WebGPU and Rust, with AI agents
+doing most of the implementation.
 
 ## Goals
 
-- **Primary learning goal:** WebGPU (TypeScript + WGSL), in the frontend.
-- **Secondary:** Rust — kept as plumbing for now; the real payoff is the camera
-  solver (milestone 6).
-- **Working style:** _pair on everything_ — Claude sketches/scaffolds, Nino fills
-  in and modifies, we discuss tradeoffs live. Revisit per-milestone.
+- **Ship the tool.** Velocity over hand-coding: agents implement each roadmap
+  item end to end and open a PR; Nino sets direction and reviews. See
+  `CLAUDE.md` for how agents work here.
+- **GPU:** WebGPU (TypeScript + WGSL) in the frontend.
+- **Rust:** kept as plumbing for now; the real payoff is the camera solver
+  (milestone 6).
 
 ## Stack
 
-- **Shell:** Tauri 2 + React 18 + Vite 6, Bun as package manager.
+- **Shell:** Tauri 2 + React 19 + Vite 8, Bun as package manager.
 - **GPU:** WebGPU in the webview (verified working in Tauri's WKWebView on macOS
   26.5 — adapter "apple", `core-features-and-limits`).
 - **Video:** WebCodecs via [mediabunny](https://mediabunny.dev/) for demux +
@@ -72,13 +72,12 @@ infrastructure later steps need.
 - [x] `FrameSource` spine interface + ownership/seek design.
 - [x] `MediabunnyFrameSource.open()` — demux, timestamp table, metadata, naive cache.
 - [ ] **1a harness:** drop-zone → open → draw current frame to a 2D canvas;
-      `←`/`→` to step; frame counter. _(Claude scaffolds shell; Nino writes step
-      handlers + draw call.)_ Replaces the WebGPU probe.
-- [ ] **Cache (PAIR seam #1):** windowed LRU eviction (close evicted samples; keep
-      a warm window around the playhead). _(Pair.)_
-- [ ] **Batched decode (PAIR seam #2):** `getFrames` via `samplesAtTimestamps`.
+      `←`/`→` to step; frame counter. Replaces the WebGPU probe.
+- [ ] **Cache:** windowed LRU eviction (close evicted samples; keep a warm window
+      around the playhead).
+- [ ] **Batched decode:** `getFrames` via `samplesAtTimestamps`.
 - [ ] **1b first WebGPU:** replace `.draw()` with a textured-quad renderer sampling
-      the frame as an external texture. _(Nino drives; Claude guides/reviews.)_
+      the frame as an external texture.
 
 ### 2 — Manual tracker
 
@@ -109,7 +108,7 @@ infrastructure later steps need.
 
 - [ ] Object solvers, deeper math (trig, geometry), whatever the sky permits.
 
-## Learning resources (sequenced to current work)
+## Reference material
 
 For the 1b WebGPU renderer, in order:
 
