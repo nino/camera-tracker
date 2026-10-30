@@ -75,7 +75,7 @@ infrastructure later steps need.
       `←`/`→` to step; frame counter. Replaces the WebGPU probe.
 - [x] **Cache:** windowed LRU eviction (close evicted samples; keep a warm window
       around the playhead).
-- [ ] **Batched decode:** `getFrames` via `samplesAtTimestamps`.
+- [x] **Batched decode:** `getFrames` via `samplesAtTimestamps`.
 - [ ] **1b first WebGPU:** replace `.draw()` with a textured-quad renderer sampling
       the frame as an external texture.
 
