@@ -6,7 +6,12 @@ import type { CreateRenderer, FrameRenderer } from "../gpu/frame-renderer";
  * `timestamp`, so `drawn` lists the frame indices drawn, in order.
  */
 export class FakeRenderer implements FrameRenderer {
-   readonly kind = "webgpu" as const;
+   /** Resolve to simulate a lost GPU device. */
+   loseDevice!: (reason: string) => void;
+   readonly lost = new Promise<string>((resolve) => {
+      this.loseDevice = resolve;
+   });
+   constructor(readonly kind: FrameRenderer["kind"] = "webgpu") {}
    readonly drawn: number[] = [];
    readonly draw = vi.fn((sample: VideoSample) => {
       this.drawn.push(sample.timestamp);

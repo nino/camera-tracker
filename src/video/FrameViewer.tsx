@@ -1,5 +1,6 @@
 import React from "react";
 import {
+   createCanvas2dRenderer,
    createRenderer as defaultCreateRenderer,
    type CreateRenderer,
    type FrameRenderer,
@@ -45,7 +46,10 @@ export function FrameViewer({
    const [index, setIndex] = React.useState(0);
    const [error, setError] = React.useState<string | null>(null);
    const [renderer, setRenderer] = React.useState<FrameRenderer | null>(null);
+   // Set when WebGPU fails at runtime; we then switch to canvas 2D for good.
+   const [gpuFailure, setGpuFailure] = React.useState<string | null>(null);
    const canvasRef = React.useRef<HTMLCanvasElement>(null);
+   const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
    // A canvas gets one context type for life, so the renderer is created once
    // per mount (StrictMode's mount/unmount/mount gets a fresh canvas each time).
@@ -56,7 +60,7 @@ export function FrameViewer({
       }
       let created: FrameRenderer | null = null;
       let cancelled = false;
-      createRenderer(canvas).then(
+      create(canvas).then(
          (r) => {
             if (cancelled) {
                r.dispose();
@@ -64,6 +68,11 @@ export function FrameViewer({
             }
             created = r;
             setRenderer(r);
+            void r.lost?.then((reason) => {
+               if (!cancelled) {
+                  setGpuFailure(reason);
+               }
+            });
          },
          (err: unknown) => {
             if (!cancelled) {
@@ -74,8 +83,9 @@ export function FrameViewer({
       return () => {
          cancelled = true;
          created?.dispose();
+         setRenderer(null);
       };
-   }, [createRenderer]);
+   }, [create]);
 
    React.useEffect(() => {
       function onKeyDown(event: KeyboardEvent) {
@@ -105,7 +115,12 @@ export function FrameViewer({
                renderer.draw(sample);
                setError(null);
             } catch (err) {
-               setError(err instanceof Error ? err.message : String(err));
+               const message = err instanceof Error ? err.message : String(err);
+               if (renderer.kind === "webgpu") {
+                  setGpuFailure(message);
+               } else {
+                  setError(message);
+               }
             }
          },
          (err: unknown) => {
@@ -121,7 +136,9 @@ export function FrameViewer({
 
    return (
       <div className="frame-viewer">
+         {/* A canvas can't change context type, so the 2D fallback gets a new one. */}
          <canvas
+            key={gpuFailure == null ? "auto" : "2d"}
             ref={canvasRef}
             className="frame-canvas"
             width={width}
@@ -132,8 +149,9 @@ export function FrameViewer({
             Frame {index + 1} / {frameCount}
          </p>
          {renderer != null && (
-            <p className="renderer-kind">
+            <p className="renderer-kind" title={gpuFailure ?? undefined}>
                {renderer.kind === "webgpu" ? "WebGPU" : "Canvas 2D"}
+               {gpuFailure != null && " (WebGPU failed, see tooltip)"}
             </p>
          )}
          {error != null && (

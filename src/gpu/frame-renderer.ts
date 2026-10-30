@@ -11,6 +11,11 @@ import { createWebGpuRenderer } from "./webgpu-frame-renderer";
 export interface FrameRenderer {
    /** Which backend is drawing. Shown in the UI and useful in bug reports. */
    readonly kind: "webgpu" | "2d";
+   /**
+    * Resolves with a reason if the renderer stops working on its own (WebGPU
+    * device lost, e.g. a GPU process crash). Never resolves after dispose().
+    */
+   readonly lost?: Promise<string>;
    draw(sample: VideoSample): void;
    dispose(): void;
 }
@@ -33,6 +38,10 @@ export function create2dRenderer(canvas: HTMLCanvasElement): FrameRenderer {
       dispose() {},
    };
 }
+
+/** create2dRenderer as a CreateRenderer. */
+export const createCanvas2dRenderer: CreateRenderer = async (canvas) =>
+   create2dRenderer(canvas);
 
 /** WebGPU when the webview has it, otherwise canvas 2D. */
 export const createRenderer: CreateRenderer = async (canvas) => {

@@ -112,7 +112,20 @@ describe("FrameViewer", () => {
       expect(renderer.draw).not.toHaveBeenCalled();
    });
 
-   it("shows renderer errors", async () => {
+   it("shows draw errors from the canvas 2D renderer", async () => {
+      const { renderer, create } = fakeCreateRenderer(new FakeRenderer("2d"));
+      renderer.draw.mockImplementation(() => {
+         throw new Error("canvas on fire");
+      });
+      render(
+         <FrameViewer source={new FakeFrameSource()} createRenderer={create} />,
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+         "canvas on fire",
+      );
+   });
+
+   it("switches to canvas 2D on a fresh canvas when a WebGPU draw fails", async () => {
       const { renderer, create } = fakeCreateRenderer();
       renderer.draw.mockImplementation(() => {
          throw new Error("GPU on fire");
@@ -120,7 +133,28 @@ describe("FrameViewer", () => {
       render(
          <FrameViewer source={new FakeFrameSource()} createRenderer={create} />,
       );
-      expect(await screen.findByRole("alert")).toHaveTextContent("GPU on fire");
+      const firstCanvas = screen.getByLabelText("Current frame");
+      expect(await screen.findByText(/Canvas 2D/)).toHaveAttribute(
+         "title",
+         "GPU on fire",
+      );
+      expect(renderer.dispose).toHaveBeenCalledOnce();
+      expect(screen.getByLabelText("Current frame")).not.toBe(firstCanvas);
+      expect(screen.queryByRole("alert")).toBeNull();
+   });
+
+   it("switches to canvas 2D when the WebGPU device is lost", async () => {
+      const { renderer, create } = fakeCreateRenderer();
+      render(
+         <FrameViewer source={new FakeFrameSource()} createRenderer={create} />,
+      );
+      await waitFor(() => expect(renderer.drawn).toEqual([0]));
+      await act(async () => renderer.loseDevice("device lost: crashed"));
+      expect(await screen.findByText(/Canvas 2D/)).toHaveAttribute(
+         "title",
+         "device lost: crashed",
+      );
+      expect(renderer.dispose).toHaveBeenCalledOnce();
    });
 
    it("shows decode errors", async () => {

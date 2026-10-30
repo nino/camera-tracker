@@ -169,11 +169,14 @@ export async function createWebGpuRenderer(
       throw new Error("No WebGPU adapter.");
    }
    const device = await adapter.requestDevice();
-   void device.lost.then((info) => {
-      if (info.reason !== "destroyed") {
-         console.error("WebGPU device lost:", info.message);
-      }
-   });
+   // Track our own dispose() rather than trusting `info.reason`: Chromium
+   // reports a GPU process crash as "destroyed" too.
+   let disposed = false;
+   const lost = device.lost.then((info) =>
+      disposed
+         ? new Promise<string>(() => {})
+         : `WebGPU device lost: ${info.message || info.reason}`,
+   );
 
    const context = canvas.getContext("webgpu");
    if (context == null) {
@@ -186,10 +189,12 @@ export async function createWebGpuRenderer(
 
    return {
       kind: "webgpu",
+      lost,
       draw(sample) {
          drawer.draw(sample, context.getCurrentTexture().createView());
       },
       dispose() {
+         disposed = true;
          drawer.dispose();
          context.unconfigure();
          device.destroy();
