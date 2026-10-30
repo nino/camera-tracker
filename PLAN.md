@@ -109,7 +109,11 @@ infrastructure later steps need.
 
 ### 4 — Automatic tracking
 
-- [ ] GPU correlation / pattern match around a tracker to follow it.
+- [x] Pattern match around a tracker to follow it: normalised
+      cross-correlation on the CPU with sub-pixel refinement, T / Shift+T to
+      track forward / backward, Escape to stop. This is the reference
+      implementation the GPU version is tested against.
+- [ ] Move the correlation (the score map) to a WebGPU compute shader.
 - [ ] Compute-shader track begins here (Surma's "All the cores, none of the canvas").
 
 ### 5 — Export to Blender
