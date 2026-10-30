@@ -73,7 +73,7 @@ infrastructure later steps need.
 - [x] `MediabunnyFrameSource.open()` — demux, timestamp table, metadata, naive cache.
 - [x] **1a harness:** drop-zone → open → draw current frame to a 2D canvas;
       `←`/`→` to step; frame counter. Replaces the WebGPU probe.
-- [ ] **Cache:** windowed LRU eviction (close evicted samples; keep a warm window
+- [x] **Cache:** windowed LRU eviction (close evicted samples; keep a warm window
       around the playhead).
 - [ ] **Batched decode:** `getFrames` via `samplesAtTimestamps`.
 - [ ] **1b first WebGPU:** replace `.draw()` with a textured-quad renderer sampling
