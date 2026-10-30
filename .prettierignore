@@ -8,3 +8,6 @@ bun.lock
 
 # Rust / Tauri side — managed separately, not part of the JS formatting domain
 src-tauri
+
+# Rust solver build output
+solver/target

@@ -1,0 +1,12 @@
+[package]
+name = "solver"
+version = "0.1.0"
+edition = "2021"
+description = "Camera solver for camera-tracker: bundle adjustment from 2D tracks"
+publish = false
+
+[dependencies]
+nalgebra = "0.35"
+
+[profile.test]
+opt-level = 2

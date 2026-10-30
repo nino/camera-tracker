@@ -37,6 +37,12 @@ A change is done when all of these pass locally:
 bun run check   # typecheck + lint + format:check + tests
 ```
 
+and, if `solver/` changed (CI runs these too):
+
+```sh
+cd solver && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+```
+
 and, if `src-tauri/` changed:
 
 ```sh
@@ -86,8 +92,10 @@ Run `bun run format` before committing; it is faster than fixing
   macOS.
 - **Video:** WebCodecs via [mediabunny](https://mediabunny.dev/) for demux and
   frame-accurate decode.
-- **Rust:** `src-tauri/`. Plumbing for now; the camera solver lands there in
-  milestone 6. The JS tooling (ESLint, Prettier, Vitest) ignores `src-tauri/`.
+- **Rust:** the camera solver is its own crate in `solver/`: pure maths, no
+  Tauri or I/O, with nalgebra for linear algebra, so it can be built natively
+  or to WebAssembly. `src-tauri/` is the desktop shell (plumbing). The JS
+  tooling (ESLint, Prettier, Vitest) ignores both.
 
 ## Layout
 
@@ -125,6 +133,10 @@ src/
     fake-frame-source.ts   FakeFrameSource for component tests
     fake-renderer.ts       FakeRenderer: records which frames were drawn
     synthetic-scene.ts     textured luma test images (Gaussian blobs) for tracking tests
+solver/                Rust camera solver crate (pure; no Tauri or I/O). cargo test.
+  src/camera.rs          pinhole model, poses, projection
+  src/bundle.rs          bundle adjustment (Levenberg–Marquardt, Schur complement)
+  src/synthetic.rs       test scenes with known cameras and points
 src-tauri/             Rust/Tauri shell
 PLAN.md                roadmap and design decisions
 ```
