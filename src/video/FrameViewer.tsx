@@ -9,12 +9,18 @@ import { OnionControls } from "../onion/OnionControls";
 import { defaultOnionSettings, onionLayers } from "../onion/onion";
 import { TrackList } from "../tracking/TrackList";
 import { TrackOverlay } from "../tracking/TrackOverlay";
+import { loadTracks, saveTracks } from "../tracking/storage";
 import { initialTrackState, tracksReducer } from "../tracking/tracks";
 import { clampFrame } from "./frame-index";
 import type { FrameSource } from "./frame-source";
 
 export interface FrameViewerProps {
    source: FrameSource;
+   /**
+    * Identifies the clip for autosaving its tracks (see tracking/storage.ts).
+    * Without one, tracks aren't saved.
+    */
+   clipKey?: string;
    /** Picks the drawing backend. Defaults to WebGPU with a canvas 2D fallback. */
    createRenderer?: CreateRenderer;
 }
@@ -64,6 +70,7 @@ function stepForKey(event: KeyboardEvent, frameCount: number): number | null {
  */
 export function FrameViewer({
    source,
+   clipKey,
    createRenderer = defaultCreateRenderer,
 }: FrameViewerProps) {
    const { frameCount, width, height } = source.metadata;
@@ -72,10 +79,15 @@ export function FrameViewer({
    const [renderer, setRenderer] = React.useState<FrameRenderer | null>(null);
    // Set when WebGPU fails at runtime; we then switch to canvas 2D for good.
    const [gpuFailure, setGpuFailure] = React.useState<string | null>(null);
-   const [tracks, dispatch] = React.useReducer(
-      tracksReducer,
-      initialTrackState,
+   const [tracks, dispatch] = React.useReducer(tracksReducer, clipKey, (key) =>
+      key == null ? initialTrackState : loadTracks(key, frameCount),
    );
+   // Autosave on change. (Selection changes rewrite the same data; cheap.)
+   React.useEffect(() => {
+      if (clipKey != null) {
+         saveTracks(clipKey, tracks);
+      }
+   }, [clipKey, tracks]);
    const selectedId = tracks.selectedId;
    const [onion, setOnion] = React.useState(defaultOnionSettings);
    const canvasRef = React.useRef<HTMLCanvasElement>(null);

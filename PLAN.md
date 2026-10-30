@@ -98,7 +98,8 @@ infrastructure later steps need.
 - [x] Move it across frames; data model for tracks over time (keys per frame,
       held between keys; drag or Alt+arrow nudge to key a frame).
 - [x] Decide coded-vs-display coords: display (see "Key design decisions").
-- [ ] Persist tracks (save/load with the clip) — not started.
+- [x] Persist tracks: autosaved per clip (name + size + mtime) in
+      localStorage, as versioned JSON (`src/tracking/serialize.ts`).
 
 ### 3 — Onion-skinning
 
