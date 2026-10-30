@@ -53,8 +53,6 @@ export class MediabunnyFrameSource extends CachedFrameSource {
          duration: await input.computeDuration(),
       };
 
-      // TODO: batched decode for getFrames via sink.samplesAtTimestamps() is
-      // the next roadmap item (PLAN.md milestone 1).
       return new MediabunnyFrameSource(
          metadata,
          timestamps,

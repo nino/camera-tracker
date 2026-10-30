@@ -8,13 +8,36 @@ interface FakeSample {
    close(): void;
 }
 
-/** A decoder whose decodes resolve only when the test says so. */
+/** A fake decoder. With `auto = false`, decodes wait for `flush()`. */
 class ManualDecoder implements SampleDecoder {
    readonly decoded: FakeSample[] = [];
+   /** Timestamps passed to each samplesAtTimestamps call. */
+   readonly batches: number[][] = [];
+   /** Timestamps for which the decoder yields null. */
+   readonly missing = new Set<number>();
    private readonly waiting: Array<() => void> = [];
    auto = true;
 
-   getSample = vi.fn((timestamp: number) => {
+   getSample = vi.fn((timestamp: number) => this.decode(timestamp));
+
+   async *samplesAtTimestamps(timestamps: Iterable<number>) {
+      const list = [...timestamps];
+      this.batches.push(list);
+      for (const timestamp of list) {
+         yield await this.decode(timestamp);
+      }
+   }
+
+   /** Resolve every pending decode. */
+   async flush() {
+      this.waiting.splice(0).forEach((resolve) => resolve());
+      await Promise.resolve();
+   }
+
+   private decode(timestamp: number): Promise<VideoSample | null> {
+      if (this.missing.has(timestamp)) {
+         return Promise.resolve(null);
+      }
       const sample: FakeSample = {
          timestamp,
          closed: false,
@@ -30,15 +53,7 @@ class ManualDecoder implements SampleDecoder {
       if (this.auto) {
          return Promise.resolve(result);
       }
-      return new Promise<VideoSample>((resolve) =>
-         this.waiting.push(() => resolve(result)),
-      );
-   });
-
-   /** Resolve every pending decode. */
-   async flush() {
-      this.waiting.splice(0).forEach((resolve) => resolve());
-      await Promise.resolve();
+      return new Promise((resolve) => this.waiting.push(() => resolve(result)));
    }
 }
 
@@ -144,7 +159,74 @@ describe("CachedFrameSource", () => {
 
    it("reports a decoder that returns no frame", async () => {
       const { decoder, source } = setup();
-      decoder.getSample.mockResolvedValueOnce(null as unknown as VideoSample);
+      decoder.missing.add(0);
       await expect(source.getFrame(0)).rejects.toThrow(/no frame/);
+   });
+
+   describe("getFrames batching", () => {
+      it("decodes all misses in one sorted pass and returns frames in request order", async () => {
+         const { decoder, source } = setup(10);
+         await source.getFrame(4); // already cached; must not be decoded again
+         decoder.getSample.mockClear();
+
+         const frames = await source.getFrames([6, 2, 4, 2, 0]);
+
+         expect(frames.map((frame) => frame.timestamp)).toEqual([
+            0.62, 0.25, 0.45, 0.25, 0,
+         ]);
+         expect(decoder.batches).toEqual([[0, 0.25, 0.62]]);
+         expect(decoder.getSample).not.toHaveBeenCalled();
+      });
+
+      it("lets a concurrent getFrame join the batch instead of decoding again", async () => {
+         const { decoder, source } = setup(10);
+         decoder.auto = false;
+         const batch = source.getFrames([1, 3]);
+         const single = source.getFrame(3);
+         // Let the batch's generator start its first decode.
+         await Promise.resolve();
+         for (let i = 0; i < 4; i++) {
+            await decoder.flush();
+         }
+         const [, three] = await batch;
+         expect(await single).toBe(three);
+         expect(decoder.getSample).not.toHaveBeenCalled();
+         expect(decoder.decoded).toHaveLength(2);
+      });
+
+      it("fails only the frames the decoder couldn't produce", async () => {
+         const { decoder, source } = setup(10);
+         decoder.missing.add(0.25);
+         await expect(source.getFrames([1, 2, 3])).rejects.toThrow(
+            /no frame for index 2/,
+         );
+         // The other frames still made it into the cache.
+         const frames = await source.getFrames([1, 3]);
+         expect(frames.map((frame) => frame.timestamp)).toEqual([0.1, 0.3]);
+         expect(decoder.batches).toHaveLength(1);
+      });
+
+      it("fails the rest of the batch if the decoder stops early", async () => {
+         const { decoder, source } = setup(10);
+         decoder.samplesAtTimestamps = async function* () {
+            yield null;
+         } as typeof decoder.samplesAtTimestamps;
+         await expect(source.getFrames([5, 6])).rejects.toThrow(
+            /no frame for index 5/,
+         );
+         await expect(source.getFrame(6)).resolves.toBeDefined();
+      });
+
+      it("closes frames that arrive after dispose", async () => {
+         const { decoder, source } = setup(10);
+         decoder.auto = false;
+         const batch = source.getFrames([0, 1]);
+         source.dispose();
+         for (let i = 0; i < 4; i++) {
+            await decoder.flush();
+         }
+         await expect(batch).rejects.toThrow(/disposed/);
+         expect(decoder.decoded.every((sample) => sample.closed)).toBe(true);
+      });
    });
 });
