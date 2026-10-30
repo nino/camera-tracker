@@ -89,3 +89,84 @@ body {
    font-size: 12px;
    opacity: 0.5;
 }
+
+.frame-stage {
+   position: relative;
+   line-height: 0;
+}
+
+.track-overlay {
+   position: absolute;
+   inset: 0;
+   width: 100%;
+   height: 100%;
+   cursor: crosshair;
+   touch-action: none;
+}
+
+.track-marker {
+   cursor: move;
+   stroke: #ffd60a;
+   stroke-width: 1.5px;
+}
+
+.track-marker text {
+   fill: #ffd60a;
+   stroke: none;
+   user-select: none;
+}
+
+.track-marker.held {
+   stroke-dasharray: 3 2;
+   opacity: 0.6;
+}
+
+.track-marker.selected {
+   stroke: #3ddc97;
+}
+
+.track-marker.selected text {
+   fill: #3ddc97;
+}
+
+.track-list {
+   list-style: none;
+   margin: 0;
+   padding: 0;
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+   font-variant-numeric: tabular-nums;
+}
+
+.track-list li {
+   display: flex;
+   align-items: center;
+   gap: 12px;
+}
+
+.track-list li.selected .track-select {
+   color: #3ddc97;
+}
+
+.track-list button {
+   font: inherit;
+   color: inherit;
+   background: #333338;
+   border: none;
+   border-radius: 6px;
+   padding: 2px 8px;
+   cursor: pointer;
+}
+
+.track-keys,
+.track-position {
+   opacity: 0.7;
+}
+
+.track-hint {
+   margin: 0;
+   opacity: 0.7;
+   max-width: 40em;
+   text-align: center;
+}

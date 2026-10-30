@@ -5,6 +5,9 @@ import {
    type CreateRenderer,
    type FrameRenderer,
 } from "../gpu/frame-renderer";
+import { TrackList } from "../tracking/TrackList";
+import { TrackOverlay } from "../tracking/TrackOverlay";
+import { initialTrackState, tracksReducer } from "../tracking/tracks";
 import { clampFrame } from "./frame-index";
 import type { FrameSource } from "./frame-source";
 
@@ -12,6 +15,22 @@ export interface FrameViewerProps {
    source: FrameSource;
    /** Picks the drawing backend. Defaults to WebGPU with a canvas 2D fallback. */
    createRenderer?: CreateRenderer;
+}
+
+/** Arrow key -> unit direction, or `null` for other keys. */
+function arrowDirection(key: string): [number, number] | null {
+   switch (key) {
+      case "ArrowLeft":
+         return [-1, 0];
+      case "ArrowRight":
+         return [1, 0];
+      case "ArrowUp":
+         return [0, -1];
+      case "ArrowDown":
+         return [0, 1];
+      default:
+         return null;
+   }
 }
 
 /** How far a key moves the playhead, or `null` if the key isn't a step key. */
@@ -32,8 +51,11 @@ function stepForKey(event: KeyboardEvent, frameCount: number): number | null {
 }
 
 /**
- * Shows one frame of a FrameSource and steps through frames with the keyboard
- * (←/→, Shift for ×10, Home/End).
+ * Shows one frame of a FrameSource with its trackers.
+ *
+ * Keys: ←/→ step frames (Shift ×10), Home/End jump to the ends. With a track
+ * selected, Alt+arrows nudge it 1 px on this frame (Alt+Shift: 0.1 px),
+ * Delete removes it, Escape deselects.
  *
  * Frames are fetched by integer index only, and each sample is drawn in the
  * same synchronous step that receives it, then dropped (the source owns it).
@@ -48,6 +70,11 @@ export function FrameViewer({
    const [renderer, setRenderer] = React.useState<FrameRenderer | null>(null);
    // Set when WebGPU fails at runtime; we then switch to canvas 2D for good.
    const [gpuFailure, setGpuFailure] = React.useState<string | null>(null);
+   const [tracks, dispatch] = React.useReducer(
+      tracksReducer,
+      initialTrackState,
+   );
+   const selectedId = tracks.selectedId;
    const canvasRef = React.useRef<HTMLCanvasElement>(null);
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
@@ -89,6 +116,10 @@ export function FrameViewer({
 
    React.useEffect(() => {
       function onKeyDown(event: KeyboardEvent) {
+         if (selectedId != null && handleTrackKey(event, selectedId)) {
+            event.preventDefault();
+            return;
+         }
          const step = stepForKey(event, frameCount);
          if (step == null) {
             return;
@@ -96,9 +127,32 @@ export function FrameViewer({
          event.preventDefault();
          setIndex((i) => clampFrame(i + step, frameCount));
       }
+      function handleTrackKey(event: KeyboardEvent, id: number): boolean {
+         const direction = arrowDirection(event.key);
+         if (event.altKey && direction != null) {
+            const amount = event.shiftKey ? 0.1 : 1;
+            dispatch({
+               type: "nudge",
+               id,
+               frame: index,
+               dx: direction[0] * amount,
+               dy: direction[1] * amount,
+            });
+            return true;
+         }
+         if (event.key === "Delete" || event.key === "Backspace") {
+            dispatch({ type: "remove", id });
+            return true;
+         }
+         if (event.key === "Escape") {
+            dispatch({ type: "select", id: null });
+            return true;
+         }
+         return false;
+      }
       window.addEventListener("keydown", onKeyDown);
       return () => window.removeEventListener("keydown", onKeyDown);
-   }, [frameCount]);
+   }, [frameCount, selectedId, index]);
 
    React.useEffect(() => {
       if (renderer == null) {
@@ -136,15 +190,24 @@ export function FrameViewer({
 
    return (
       <div className="frame-viewer">
-         {/* A canvas can't change context type, so the 2D fallback gets a new one. */}
-         <canvas
-            key={gpuFailure == null ? "auto" : "2d"}
-            ref={canvasRef}
-            className="frame-canvas"
-            width={width}
-            height={height}
-            aria-label="Current frame"
-         />
+         <div className="frame-stage">
+            {/* A canvas can't change context type, so the 2D fallback gets a new one. */}
+            <canvas
+               key={gpuFailure == null ? "auto" : "2d"}
+               ref={canvasRef}
+               className="frame-canvas"
+               width={width}
+               height={height}
+               aria-label="Current frame"
+            />
+            <TrackOverlay
+               width={width}
+               height={height}
+               frame={index}
+               state={tracks}
+               dispatch={dispatch}
+            />
+         </div>
          <p className="frame-counter" aria-live="polite">
             Frame {index + 1} / {frameCount}
          </p>
@@ -159,6 +222,7 @@ export function FrameViewer({
                {error}
             </p>
          )}
+         <TrackList frame={index} state={tracks} dispatch={dispatch} />
       </div>
    );
 }
