@@ -26,6 +26,8 @@ makes product calls. That means:
   in `PLAN.md` in the same PR.
 - **One PR per roadmap item** (or per coherent slice of one). Small, reviewable
   PRs merge faster than big ones.
+- **Merge your own PRs** once CI is green and any review comments are
+  handled, then move on to the next item. Nino reviews after the fact.
 
 ## Definition of done
 
@@ -91,11 +93,16 @@ Run `bun run format` before committing; it is faster than fixing
 
 ```
 src/
-  App.tsx              top-level component
+  App.tsx                  file open / drop zone; takes `openSource` as a prop
   video/
-    frame-source.ts    FrameSource interface (the spine; read its doc comment)
-    mediabunny-source.ts  the real FrameSource, backed by mediabunny
-  test/setup.ts        Vitest setup (jest-dom matchers)
+    frame-source.ts        FrameSource interface (the spine; read its doc comment)
+    cached-frame-source.ts FrameSource over any decoder: LRU cache, pinning, ownership
+    frame-cache.ts         the LRU cache itself (pure, unit-tested)
+    mediabunny-source.ts   opens a file with mediabunny; extends CachedFrameSource
+    FrameViewer.tsx        draws the current frame, keyboard stepping
+  test/
+    setup.ts               Vitest setup (jest-dom matchers, quiet canvas stub)
+    fake-frame-source.ts   FakeFrameSource for component tests
 src-tauri/             Rust/Tauri shell
 PLAN.md                roadmap and design decisions
 ```
