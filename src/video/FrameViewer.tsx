@@ -7,6 +7,10 @@ import {
    type FrameRenderer,
 } from "../gpu/frame-renderer";
 import { blenderScript, blenderScriptName } from "../export/blender";
+import {
+   blenderCameraScript,
+   blenderCameraScriptName,
+} from "../export/blender-camera";
 import { downloadText } from "../export/download";
 import { OnionControls } from "../onion/OnionControls";
 import { defaultOnionSettings, onionLayers } from "../onion/onion";
@@ -30,7 +34,7 @@ import {
    tracksReducer,
 } from "../tracking/tracks";
 import { SolvePanel } from "../solve/SolvePanel";
-import type { SolveCamera } from "../solve/solve-types";
+import type { Solution, SolveCamera } from "../solve/solve-types";
 import { createWorkerSolver } from "../solve/worker-solver";
 import { clampFrame } from "./frame-index";
 import type { FrameSource } from "./frame-source";
@@ -233,6 +237,22 @@ export function FrameViewer({
       } catch (err) {
          setError(err instanceof Error ? err.message : String(err));
       }
+   }
+   function exportCamera(solution: Solution) {
+      saveFile(
+         blenderCameraScriptName(clipName),
+         blenderCameraScript(
+            solution,
+            {
+               clipName,
+               width,
+               height,
+               frameCount,
+               frameRate: source.metadata.frameRate,
+            },
+            new Map(tracks.tracks.map((t) => [t.id, t.name])),
+         ),
+      );
    }
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
@@ -461,6 +481,7 @@ export function FrameViewer({
                frame={index}
                onSeek={setIndex}
                solveCamera={solveCamera}
+               onExport={exportCamera}
             />
          )}
       </div>

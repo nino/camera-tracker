@@ -2,7 +2,7 @@ import React from "react";
 import type { TrackState } from "../tracking/tracks";
 import { CameraPath } from "./CameraPath";
 import { focalMillimetres, solveRequest } from "./request";
-import type { SolveCamera, SolveResponse } from "./solve-types";
+import type { Solution, SolveCamera, SolveResponse } from "./solve-types";
 
 export interface SolvePanelProps {
    tracks: TrackState;
@@ -13,6 +13,8 @@ export interface SolvePanelProps {
    frame: number;
    onSeek: (frame: number) => void;
    solveCamera: SolveCamera;
+   /** Exports a solve (for Blender). Without it, there's no export button. */
+   onExport?: (solution: Solution) => void;
 }
 
 type Run =
@@ -42,6 +44,7 @@ export function SolvePanel({
    frame,
    onSeek,
    solveCamera,
+   onExport,
 }: SolvePanelProps) {
    const [focalMm, setFocalMm] = React.useState(DEFAULT_FOCAL_MM);
    const [refineFocal, setRefineFocal] = React.useState(true);
@@ -149,6 +152,7 @@ export function SolvePanel({
                frameCount={frameCount}
                frame={frame}
                onSeek={onSeek}
+               onExport={onExport}
             />
          )}
       </section>
@@ -163,6 +167,7 @@ function SolveResult({
    frameCount,
    frame,
    onSeek,
+   onExport,
 }: {
    run: Extract<Run, { status: "done" }>;
    stale: boolean;
@@ -171,6 +176,7 @@ function SolveResult({
    frameCount: number;
    frame: number;
    onSeek: (frame: number) => void;
+   onExport?: (solution: Solution) => void;
 }) {
    const { response } = run;
    if (response.status === "failed") {
@@ -198,6 +204,11 @@ function SolveResult({
             </p>
          )}
          <CameraPath solution={response} frame={frame} onSeek={onSeek} />
+         {onExport != null && (
+            <button type="button" onClick={() => onExport(response)}>
+               Export camera for Blender
+            </button>
+         )}
       </>
    );
 }

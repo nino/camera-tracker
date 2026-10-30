@@ -131,6 +131,7 @@ src/
     OnionControls.tsx      onion-skin settings UI
   export/
     blender.ts             tracks -> Python script that recreates them in Blender (pure)
+    blender-camera.ts      camera solve -> Python script: animated camera + empties (pure)
     download.ts            save text as a browser download
   solve/
     solve-types.ts         the solver's JSON request/response (mirrors solver/src/api.rs)
