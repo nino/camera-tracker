@@ -73,17 +73,18 @@ bun add / bun remove   # change dependencies
 
 ## Commands
 
-| Command             | What it does                                        |
-| ------------------- | --------------------------------------------------- |
-| `bun run check`     | Everything CI runs: typecheck, lint, format, tests  |
-| `bun run dev`       | Vite dev server (web only, port 1420)               |
-| `bun run tauri dev` | Full Tauri desktop app (needs a desktop; not in CI) |
-| `bun run build`     | Type-check (`tsc`) then build the web bundle        |
-| `bun run typecheck` | Type-check only, no emit                            |
-| `bun run lint`      | ESLint (`lint:fix` to autofix)                      |
-| `bun run format`    | Prettier write (`format:check` to verify)           |
-| `bun run test`      | Vitest once (`test:watch` for watch mode)           |
-| `bun run coverage`  | Vitest with a V8 coverage report                    |
+| Command                | What it does                                        |
+| ---------------------- | --------------------------------------------------- |
+| `bun run check`        | Everything CI runs: typecheck, lint, format, tests  |
+| `bun run dev`          | Vite dev server (web only, port 1420)               |
+| `bun run tauri dev`    | Full Tauri desktop app (needs a desktop; not in CI) |
+| `bun run build`        | Build the solver WASM, type-check, build the bundle |
+| `bun run build:solver` | Build `solver/` to WebAssembly (`dev` runs it too)  |
+| `bun run typecheck`    | Type-check only, no emit                            |
+| `bun run lint`         | ESLint (`lint:fix` to autofix)                      |
+| `bun run format`       | Prettier write (`format:check` to verify)           |
+| `bun run test`         | Vitest once (`test:watch` for watch mode)           |
+| `bun run coverage`     | Vitest with a V8 coverage report                    |
 
 Run `bun run format` before committing; it is faster than fixing
 `format:check` failures by hand.
@@ -99,6 +100,10 @@ Run `bun run format` before committing; it is faster than fixing
   Tauri or I/O, with nalgebra for linear algebra, so it can be built natively
   or to WebAssembly. `src-tauri/` is the desktop shell (plumbing). The JS
   tooling (ESLint, Prettier, Vitest) ignores both.
+- **Solver in the app:** WebAssembly in a Web Worker (`src/solve/`).
+  `bun run dev` and `bun run build` compile it first, which needs
+  `rustup target add wasm32-unknown-unknown` once. Unit tests and
+  `bun run check` don't need the .wasm; they use a fake `SolveCamera`.
 
 ## Layout
 
@@ -127,11 +132,21 @@ src/
   export/
     blender.ts             tracks -> Python script that recreates them in Blender (pure)
     download.ts            save text as a browser download
+  solve/
+    solve-types.ts         the solver's JSON request/response (mirrors solver/src/api.rs)
+    request.ts             tracks -> solve request; focal mm <-> px (pure)
+    wasm-solver.ts         the C-ABI binding to the solver's .wasm
+    solve-worker.ts        Web Worker that loads the .wasm and runs solves
+    worker-solver.ts       SolveCamera over the worker (cancel = terminate)
+    SolvePanel.tsx         focal guess, Solve/Cancel, result summary
+    camera-path.ts         top-view maths for the camera path (pure)
+    CameraPath.tsx         SVG top view of cameras and points; click to seek
   gpu/
     frame-renderer.ts      FrameRenderer interface; picks WebGPU or canvas 2D
     webgpu-frame-renderer.ts  WGSL shader, createFrameDrawer (any target), canvas renderer
     score-map.ts           WebGPU compute score map for tracking; createScorer falls back to CPU
   test/
+    click-camera.ts        clicks a camera in a rendered CameraPath (jsdom has no layout)
     setup.ts               Vitest setup (jest-dom matchers, quiet canvas stub)
     fake-frame-source.ts   FakeFrameSource for component tests
     fake-renderer.ts       FakeRenderer: records which frames were drawn

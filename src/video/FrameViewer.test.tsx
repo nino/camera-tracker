@@ -10,6 +10,8 @@ import { FakeFrameSource } from "../test/fake-frame-source";
 import { blobScene, renderLuma } from "../test/synthetic-scene";
 import { FakeRenderer, fakeCreateRenderer } from "../test/fake-renderer";
 import type { Scorer } from "../gpu/score-map";
+import type { Solution, SolveCamera } from "../solve/solve-types";
+import { clickCamera } from "../test/click-camera";
 import { scoreMap } from "../tracking/match";
 import { FrameViewer } from "./FrameViewer";
 
@@ -324,6 +326,57 @@ describe("FrameViewer", () => {
          expect(data.tracks).toEqual([
             { name: "Track 1", markers: [[1, 0.25, 0.75]] },
          ]);
+      });
+
+      it("solves the camera and seeks from the camera path", async () => {
+         const solution: Solution = {
+            status: "solved",
+            focal: 200,
+            rms: 0.25,
+            keyframes: [0, 4],
+            cameras: [0, 4].map((frame) => ({
+               frame,
+               rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+               translation: [-frame, 0, 0],
+               centre: [frame, 0, 0],
+            })),
+            points: [],
+            outliers: [],
+         };
+         const solveCamera = vi.fn<SolveCamera>().mockResolvedValue(solution);
+         render(
+            <FrameViewer
+               source={new FakeFrameSource({ width: 200, height: 100 })}
+               createRenderer={fakeCreateRenderer().create}
+               solveCamera={solveCamera}
+            />,
+         );
+         expect(
+            screen.queryByRole("button", { name: "Solve camera" }),
+         ).toBeNull();
+         const svg = screen.getByTestId("track-overlay");
+         vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+            left: 0,
+            top: 0,
+            width: 200,
+            height: 100,
+         } as DOMRect);
+         fireEvent.pointerDown(svg.querySelector("rect")!, {
+            button: 0,
+            clientX: 50,
+            clientY: 25,
+         });
+         fireEvent.click(screen.getByRole("button", { name: "Solve camera" }));
+         expect(solveCamera.mock.calls[0][0]).toMatchObject({
+            width: 200,
+            height: 100,
+            tracks: [{ keys: [[0, 50, 25]] }],
+         });
+         expect(
+            await screen.findByText(/Solved 2 of \d+ frames/),
+         ).toBeInTheDocument();
+         clickCamera(solution, 4);
+         expect(screen.getByText(/^Frame 5 \//)).toBeInTheDocument();
       });
 
       it("unkeys a frame from the track list", async () => {

@@ -4,8 +4,9 @@
    "version": "0.1.0",
    "type": "module",
    "scripts": {
-      "dev": "vite",
-      "build": "tsc && vite build",
+      "dev": "bun run build:solver && vite",
+      "build": "bun run build:solver && tsc && vite build",
+      "build:solver": "cargo build --release --target wasm32-unknown-unknown --manifest-path solver/Cargo.toml",
       "preview": "vite preview",
       "tauri": "tauri",
       "lint": "eslint .",
