@@ -104,6 +104,9 @@ src/
     tracks.ts              track data model + reducer (pure; positions in display px)
     TrackOverlay.tsx       SVG layer over the frame: add, select, drag markers
     TrackList.tsx          track list with positions and per-frame keys
+  onion/
+    onion.ts               which neighbour frames to blend, with what opacity/tint (pure)
+    OnionControls.tsx      onion-skin settings UI
   gpu/
     frame-renderer.ts      FrameRenderer interface; picks WebGPU or canvas 2D
     webgpu-frame-renderer.ts  WGSL shader, createFrameDrawer (any target), canvas renderer
@@ -154,7 +157,9 @@ Chromium and Playwright are available in cloud sessions
 (`require("playwright")`), and `ffmpeg` can make test clips
 (`ffmpeg -f lavfi -i testsrc=size=320x240:rate=24:duration=5 -c:v libx264
 -pix_fmt yuv420p clip.mp4`; add `-display_rotation 90` before `-i` for a
-rotated clip). Run `bun run dev`, then drive `http://localhost:1420`. From
+rotated clip). For motion, overlay a moving box:
+`-i "color=c=0x202830:size=480x270:rate=24:duration=3[bg];color=c=white:size=40x40:rate=24[b];[bg][b]overlay=x='40+t*120':y=100:shortest=1"`
+(`drawbox` doesn't animate with `t`). Run `bun run dev`, then drive `http://localhost:1420`. From
 `page.evaluate` you can `import("/src/…/*.ts")` and call app code directly.
 
 - **WebCodecs** works headless: H.264 MP4 and VP9 WebM both decode.

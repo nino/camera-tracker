@@ -102,8 +102,9 @@ infrastructure later steps need.
 
 ### 3 — Onion-skinning
 
-- [ ] Sample N frames (`getFrames`) and blend them in a shader.
-- [ ] Controls: how many frames, opacity falloff, before/after.
+- [x] Sample N frames (`getFrames`) and blend them in a shader.
+- [x] Controls: how many frames, opacity falloff, before/after (plus a
+      red/cyan before/after tint, and O to toggle).
 
 ### 4 — Automatic tracking
 

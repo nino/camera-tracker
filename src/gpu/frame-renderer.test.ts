@@ -1,5 +1,9 @@
 import type { VideoSample } from "mediabunny";
-import { create2dRenderer, createRenderer } from "./frame-renderer";
+import {
+   create2dRenderer,
+   createRenderer,
+   singleLayer,
+} from "./frame-renderer";
 
 function canvas(width = 32, height = 16) {
    const el = document.createElement("canvas");
@@ -14,13 +18,17 @@ describe("create2dRenderer", () => {
       const el = canvas();
       vi.spyOn(el, "getContext").mockReturnValue(ctx as never);
       const draw = vi.fn();
-      create2dRenderer(el).draw({ draw } as unknown as VideoSample);
+      create2dRenderer(el).draw(
+         singleLayer({ draw } as unknown as VideoSample),
+      );
       expect(draw).toHaveBeenCalledWith(ctx, 0, 0, 32, 16);
    });
 
    it("does nothing when there is no 2D context", () => {
       const draw = vi.fn();
-      create2dRenderer(canvas()).draw({ draw } as unknown as VideoSample);
+      create2dRenderer(canvas()).draw(
+         singleLayer({ draw } as unknown as VideoSample),
+      );
       expect(draw).not.toHaveBeenCalled();
    });
 });

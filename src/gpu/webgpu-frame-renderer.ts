@@ -4,12 +4,17 @@ import type { FrameRenderer } from "./frame-renderer";
 /**
  * Fullscreen triangle that samples the frame texture.
  *
+ * The pipeline alpha-blends the output over what is already in the target, using
+ * `opacity`, and multiplies colours by `tint` (onion-skin layers).
+ *
  * `rotation` is the sample's display rotation in quarter turns clockwise. The
  * canvas is sized to the *display* (rotated) dimensions, so for each output
  * pixel we map display UV back to the coded frame's UV.
  */
 export const FRAME_SHADER = /* wgsl */ `
 struct Params {
+   tint: vec3f,
+   opacity: f32,
    rotation: u32,
 }
 
@@ -43,7 +48,8 @@ fn fs(in: VsOut) -> @location(0) vec4f {
       case 3u: { s = vec2f(1.0 - d.y, d.x); }
       default: { s = d; }
    }
-   return textureSample(frame, frameSampler, s);
+   let color = textureSample(frame, frameSampler, s);
+   return vec4f(color.rgb * params.tint, params.opacity);
 }
 `;
 
@@ -57,8 +63,22 @@ fn fs(in: VsOut) -> @location(0) vec4f {
  * to sRGB. We chose this over `importExternalTexture`; see PLAN.md, "Key
  * design decisions".
  */
+export interface DrawOptions {
+   load?: GPULoadOp;
+   opacity?: number;
+   tint?: readonly [number, number, number];
+}
+
 export interface FrameDrawer {
-   draw(sample: VideoSample, target: GPUTextureView): void;
+   /**
+    * Draws `sample` into `target`. With `load: "clear"` (the default) the
+    * target is cleared first; with `"load"` the frame is blended over it.
+    */
+   draw(
+      sample: VideoSample,
+      target: GPUTextureView,
+      options?: DrawOptions,
+   ): void;
    dispose(): void;
 }
 
@@ -70,15 +90,34 @@ export function createFrameDrawer(
    const pipeline = device.createRenderPipeline({
       layout: "auto",
       vertex: { module, entryPoint: "vs" },
-      fragment: { module, entryPoint: "fs", targets: [{ format }] },
+      fragment: {
+         module,
+         entryPoint: "fs",
+         targets: [
+            {
+               format,
+               blend: {
+                  color: {
+                     srcFactor: "src-alpha",
+                     dstFactor: "one-minus-src-alpha",
+                  },
+                  alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" },
+               },
+            },
+         ],
+      },
       primitive: { topology: "triangle-list" },
    });
    const sampler = device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
    });
+   // Params: tint vec3f @0, opacity f32 @12, rotation u32 @16; 32 bytes total.
+   const paramData = new ArrayBuffer(32);
+   const paramFloats = new Float32Array(paramData);
+   const paramUints = new Uint32Array(paramData);
    const params = device.createBuffer({
-      size: 16,
+      size: paramData.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
    });
 
@@ -110,7 +149,11 @@ export function createFrameDrawer(
    }
 
    return {
-      draw(sample, target) {
+      draw(
+         sample,
+         target,
+         { load = "clear", opacity = 1, tint = [1, 1, 1] } = {},
+      ) {
          // This VideoFrame is ours (the sample stays in the cache). The copy
          // is enqueued synchronously, so we can close it straight after.
          const frame = sample.toVideoFrame();
@@ -126,18 +169,19 @@ export function createFrameDrawer(
          } finally {
             frame.close();
          }
-         device.queue.writeBuffer(
-            params,
-            0,
-            new Uint32Array([((sample.rotation / 90) | 0) % 4, 0, 0, 0]),
-         );
+         paramFloats.set(tint, 0);
+         paramFloats[3] = load === "clear" ? 1 : opacity;
+         paramUints[4] = ((sample.rotation / 90) | 0) % 4;
+         // Queue writes and submits run in order, so each layer's draw sees
+         // its own params and texture even though both are reused.
+         device.queue.writeBuffer(params, 0, paramData);
 
          const encoder = device.createCommandEncoder();
          const pass = encoder.beginRenderPass({
             colorAttachments: [
                {
                   view: target,
-                  loadOp: "clear",
+                  loadOp: load,
                   storeOp: "store",
                   clearValue: [0, 0, 0, 1],
                },
@@ -190,8 +234,15 @@ export async function createWebGpuRenderer(
    return {
       kind: "webgpu",
       lost,
-      draw(sample) {
-         drawer.draw(sample, context.getCurrentTexture().createView());
+      draw(layers) {
+         const target = context.getCurrentTexture().createView();
+         layers.forEach((layer, i) =>
+            drawer.draw(layer.sample, target, {
+               load: i === 0 ? "clear" : "load",
+               opacity: layer.opacity,
+               tint: layer.tint,
+            }),
+         );
       },
       dispose() {
          disposed = true;
