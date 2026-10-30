@@ -15,7 +15,8 @@
       "typecheck": "tsc --noEmit",
       "test": "vitest run",
       "test:watch": "vitest",
-      "coverage": "vitest run --coverage"
+      "coverage": "vitest run --coverage",
+      "check": "tsc --noEmit && eslint . && prettier --check . && vitest run"
    },
    "dependencies": {
       "@tauri-apps/api": "^2",
