@@ -277,6 +277,55 @@ describe("FrameViewer", () => {
          );
       });
 
+      it("exports the tracks as a Blender script", async () => {
+         const saveFile = vi.fn();
+         const user = userEvent.setup();
+         render(
+            <FrameViewer
+               source={
+                  new FakeFrameSource({
+                     width: 200,
+                     height: 100,
+                     frameRate: 25,
+                  })
+               }
+               createRenderer={fakeCreateRenderer().create}
+               clipName="shot.mov"
+               saveFile={saveFile}
+            />,
+         );
+         expect(
+            screen.queryByRole("button", { name: "Export for Blender" }),
+         ).toBeNull();
+         const svg = screen.getByTestId("track-overlay");
+         vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+            left: 0,
+            top: 0,
+            width: 200,
+            height: 100,
+         } as DOMRect);
+         fireEvent.pointerDown(svg.querySelector("rect")!, {
+            button: 0,
+            clientX: 50,
+            clientY: 25,
+         });
+
+         await user.click(
+            screen.getByRole("button", { name: "Export for Blender" }),
+         );
+         await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+         const [name, script] = saveFile.mock.calls[0] as [string, string];
+         expect(name).toBe("shot.tracks.py");
+         const data = JSON.parse(/^DATA = (.*)$/m.exec(script)![1]) as {
+            frameRate: number;
+            tracks: unknown;
+         };
+         expect(data.frameRate).toBe(25);
+         expect(data.tracks).toEqual([
+            { name: "Track 1", markers: [[1, 0.25, 0.75]] },
+         ]);
+      });
+
       it("unkeys a frame from the track list", async () => {
          const { user, tracks } = setup();
          await user.keyboard("{ArrowRight}{Alt>}{ArrowRight}{/Alt}");
