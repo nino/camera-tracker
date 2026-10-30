@@ -139,7 +139,18 @@ Recover the 3D camera path from 2D tracks. **Rust lives here** (`solver/`).
       path).
 - [x] Export the solved camera to Blender.
 
-### 7 — Stretch
+### 7 — Solves that hold up on real footage
+
+Real lenses distort and real tracks drift; the solve has to show where it
+disagrees with the tracks and model the lens.
+
+- [x] Show the solved points and their residuals on the frame, and list the
+      worst tracks so they can be fixed or deleted.
+- [ ] Lens distortion in the solver (radial k1, k2), refined in the solve.
+- [ ] Carry distortion into the Blender export.
+- [ ] Check on footage with visible lens distortion.
+
+### 8 — Stretch
 
 - [ ] Object solvers, deeper math (trig, geometry), whatever the sky permits.
 

@@ -218,4 +218,32 @@ describe("SolvePanel", () => {
       );
       expect(onExport).toHaveBeenCalledWith(solved);
    });
+
+   it("lists the worst tracks and selects one", async () => {
+      const { calls, solve } = controlledSolver();
+      const onSelectTrack = vi.fn();
+      const onSolution = vi.fn();
+      const { tracks } = renderPanel(solve, { onSelectTrack, onSolution });
+      fireEvent.click(screen.getByRole("button", { name: "Solve camera" }));
+      await act(async () => calls[0].resolve(solved));
+      expect(onSolution).toHaveBeenCalledWith(solved);
+      const list = screen.getByRole("list", { name: "Worst tracks" });
+      const name = tracks.tracks.find((t) => t.id === 2)!.name;
+      expect(list.firstElementChild).toHaveTextContent(`${name} (0.50 px)`);
+      fireEvent.click(
+         screen.getByRole("button", { name: `${name} (0.50 px)` }),
+      );
+      expect(onSelectTrack).toHaveBeenCalledWith(2);
+   });
+
+   it("clears the solution when a solve fails", async () => {
+      const { calls, solve } = controlledSolver();
+      const onSolution = vi.fn();
+      renderPanel(solve, { onSolution });
+      fireEvent.click(screen.getByRole("button", { name: "Solve camera" }));
+      await act(async () =>
+         calls[0].resolve({ status: "failed", message: "no" }),
+      );
+      expect(onSolution).toHaveBeenCalledWith(null);
+   });
 });

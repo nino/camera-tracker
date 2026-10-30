@@ -378,6 +378,7 @@ describe("FrameViewer", () => {
          expect(
             await screen.findByText(/Solved 2 of \d+ frames/),
          ).toBeInTheDocument();
+         expect(screen.getByTestId("solve-overlay")).toBeInTheDocument();
          clickCamera(solution, 4);
          expect(screen.getByText(/^Frame 5 \//)).toBeInTheDocument();
          fireEvent.click(

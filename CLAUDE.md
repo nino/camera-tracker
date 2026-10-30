@@ -140,6 +140,8 @@ src/
     solve-worker.ts        Web Worker that loads the .wasm and runs solves
     worker-solver.ts       SolveCamera over the worker (cancel = terminate)
     SolvePanel.tsx         focal guess, Solve/Cancel, result summary
+    reproject.ts           solved points -> pixels on a frame; worst tracks (pure)
+    SolveOverlay.tsx       solved points and residual lines over the frame
     camera-path.ts         top-view maths for the camera path (pure)
     CameraPath.tsx         SVG top view of cameras and points; click to seek
   gpu/

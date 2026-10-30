@@ -33,6 +33,7 @@ import {
    positionAt,
    tracksReducer,
 } from "../tracking/tracks";
+import { SolveOverlay } from "../solve/SolveOverlay";
 import { SolvePanel } from "../solve/SolvePanel";
 import type { Solution, SolveCamera } from "../solve/solve-types";
 import { createWorkerSolver } from "../solve/worker-solver";
@@ -254,6 +255,7 @@ export function FrameViewer({
          ),
       );
    }
+   const [solution, setSolution] = React.useState<Solution | null>(null);
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
    // A canvas gets one context type for life, so the renderer is created once
@@ -426,6 +428,15 @@ export function FrameViewer({
                height={height}
                aria-label="Current frame"
             />
+            {solution != null && (
+               <SolveOverlay
+                  solution={solution}
+                  tracks={tracks}
+                  width={width}
+                  height={height}
+                  frame={index}
+               />
+            )}
             <TrackOverlay
                width={width}
                height={height}
@@ -482,6 +493,8 @@ export function FrameViewer({
                onSeek={setIndex}
                solveCamera={solveCamera}
                onExport={exportCamera}
+               onSolution={setSolution}
+               onSelectTrack={(id) => dispatch({ type: "select", id })}
             />
          )}
       </div>
