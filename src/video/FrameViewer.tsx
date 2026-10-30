@@ -14,6 +14,10 @@ import { autoTrack } from "../tracking/autotrack";
 import { createLumaReader as defaultCreateLumaReader } from "../tracking/luma";
 import type { LumaImage } from "../tracking/match";
 import {
+   createScorer as defaultCreateScorer,
+   type Scorer,
+} from "../gpu/score-map";
+import {
    trackingStatusText,
    type TrackingStatus,
 } from "../tracking/tracking-status";
@@ -43,6 +47,8 @@ export interface FrameViewerProps {
       width: number,
       height: number,
    ) => (sample: VideoSample) => LumaImage;
+   /** Picks the score map for auto-tracking. Defaults to WebGPU, else CPU. */
+   createScorer?: () => Promise<Scorer>;
 }
 
 /** Arrow key -> unit direction, or `null` for other keys. */
@@ -94,6 +100,7 @@ export function FrameViewer({
    clipKey,
    createRenderer = defaultCreateRenderer,
    createLumaReader = defaultCreateLumaReader,
+   createScorer = defaultCreateScorer,
 }: FrameViewerProps) {
    const { frameCount, width, height } = source.metadata;
    const [index, setIndex] = React.useState(0);
@@ -120,7 +127,16 @@ export function FrameViewer({
    const readLumaRef = React.useRef<((s: VideoSample) => LumaImage) | null>(
       null,
    );
-   React.useEffect(() => () => trackingRef.current?.abort(), []);
+   // Created on first use (it holds its own GPU device), disposed on unmount.
+   const scorerRef = React.useRef<Promise<Scorer> | null>(null);
+   React.useEffect(
+      () => () => {
+         trackingRef.current?.abort();
+         void scorerRef.current?.then((scorer) => scorer.dispose());
+         scorerRef.current = null;
+      },
+      [],
+   );
 
    const startTracking = React.useCallback(
       (id: number, from: number, direction: 1 | -1) => {
@@ -144,21 +160,29 @@ export function FrameViewer({
             frames: 0,
          };
          setTrackingStatus(status);
-         autoTrack({
-            source,
-            readLuma,
-            from,
-            point: placement.point,
-            direction,
-            signal: controller.signal,
-            onStep: (frame, point) => {
-               dispatch({ type: "move", id, frame, point });
-               setIndex(frame);
-               setTrackingStatus({ ...status, frames: ++status.frames });
-            },
-         })
+         const scorer = (scorerRef.current ??= createScorer());
+         scorer
+            .then((s) =>
+               autoTrack({
+                  source,
+                  readLuma,
+                  from,
+                  point: placement.point,
+                  direction,
+                  signal: controller.signal,
+                  scorer: s.scoreMap,
+                  onStep: (frame, point) => {
+                     dispatch({ type: "move", id, frame, point });
+                     setIndex(frame);
+                     status.frames++;
+                     status.engine = s.kind;
+                     setTrackingStatus({ ...status });
+                  },
+               }).then((result) => ({ result, engine: s.kind })),
+            )
             .then(
-               (result) => setTrackingStatus({ ...status, result }),
+               ({ result, engine }) =>
+                  setTrackingStatus({ ...status, engine, result }),
                (err: unknown) => {
                   setTrackingStatus(null);
                   setError(err instanceof Error ? err.message : String(err));
@@ -170,7 +194,7 @@ export function FrameViewer({
                }
             });
       },
-      [source, width, height, createLumaReader, tracks],
+      [source, width, height, createLumaReader, createScorer, tracks],
    );
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
@@ -362,7 +386,15 @@ export function FrameViewer({
             </p>
          )}
          {trackingStatus != null && (
-            <p className="tracking-status" role="status">
+            <p
+               className="tracking-status"
+               role="status"
+               title={
+                  trackingStatus.engine == null
+                     ? undefined
+                     : `Matching on ${trackingStatus.engine === "webgpu" ? "WebGPU" : "the CPU"}`
+               }
+            >
                {trackingStatusText(trackingStatus)}
             </p>
          )}

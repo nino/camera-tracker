@@ -82,6 +82,14 @@ export function extractPatch(
    return patch;
 }
 
+/**
+ * A patch whose zero-mean norm is below this is "flat": it has no texture to
+ * match and scores 0. Far below one luma step (luma is 0..255), but well above
+ * the f32 rounding noise the GPU score map leaves on a flat patch, so the CPU
+ * and GPU agree on what counts as flat.
+ */
+export const FLAT_NORM = 1e-3;
+
 /** Zero-mean, unit-norm copy of a patch; null if the patch is flat. */
 export function normalise(patch: Float32Array): Float32Array | null {
    let mean = 0;
@@ -96,7 +104,7 @@ export function normalise(patch: Float32Array): Float32Array | null {
       norm += out[k] * out[k];
    }
    norm = Math.sqrt(norm);
-   if (norm < 1e-6) {
+   if (norm < FLAT_NORM) {
       return null;
    }
    for (let k = 0; k < out.length; k++) {
@@ -225,6 +233,19 @@ const NEIGHBOURS = [
 ] as const;
 
 /**
+ * Computes a score map (see `scoreMap`). The CPU version is the reference;
+ * gpu/score-map.ts has a WebGPU one, which is async because of the readback.
+ */
+export type ScoreMapFn = (
+   pattern: Float32Array,
+   size: number,
+   img: LumaImage,
+   cx: number,
+   cy: number,
+   radius: number,
+) => Float32Array | Promise<Float32Array>;
+
+/**
  * Finds `pattern` (normalised with `normalise`, size×size) in `target` near
  * `around`.
  */
@@ -242,6 +263,21 @@ export function matchPattern(
       around.y,
       options.searchRadius,
    );
+   return matchFromScores(pattern, target, around, options, scores);
+}
+
+/**
+ * The rest of `matchPattern` once the score map is known: pick the best
+ * integer offset, then refine it to sub-pixel precision on the CPU (a few
+ * dozen NCC evaluations, cheap next to the score map).
+ */
+export function matchFromScores(
+   pattern: Float32Array,
+   target: LumaImage,
+   around: Point,
+   options: MatchOptions,
+   scores: Float32Array,
+): MatchResult {
    const peak = peakOf(scores, options.searchRadius);
    const integer = { x: around.x + peak.dx, y: around.y + peak.dy };
    if (peak.atEdge) {

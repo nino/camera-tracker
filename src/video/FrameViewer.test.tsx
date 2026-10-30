@@ -9,6 +9,8 @@ import userEvent from "@testing-library/user-event";
 import { FakeFrameSource } from "../test/fake-frame-source";
 import { blobScene, renderLuma } from "../test/synthetic-scene";
 import { FakeRenderer, fakeCreateRenderer } from "../test/fake-renderer";
+import type { Scorer } from "../gpu/score-map";
+import { scoreMap } from "../tracking/match";
 import { FrameViewer } from "./FrameViewer";
 
 describe("FrameViewer", () => {
@@ -302,14 +304,16 @@ describe("FrameViewer", () => {
             width: 100,
             height: 80,
          }),
+         createScorer?: () => Promise<Scorer>,
       ) {
          const user = userEvent.setup();
-         render(
+         const view = render(
             <FrameViewer
                source={source}
                createRenderer={fakeCreateRenderer().create}
                // FakeFrameSource samples carry their index as `timestamp`.
                createLumaReader={() => (sample) => scene(sample.timestamp)}
+               createScorer={createScorer}
             />,
          );
          const svg = screen.getByTestId("track-overlay");
@@ -325,7 +329,7 @@ describe("FrameViewer", () => {
             clientY: 42.5,
          });
          const tracks = () => screen.getByRole("list", { name: "Tracks" });
-         return { user, tracks, source };
+         return { user, tracks, source, view };
       }
 
       it("tracks the selected track forward with T until the feature is lost", async () => {
@@ -360,6 +364,34 @@ describe("FrameViewer", () => {
          );
          expect(screen.getByText("Frame 1 / 10")).toBeInTheDocument();
          expect(tracks()).toHaveTextContent("50.50, 42.50");
+      });
+
+      it("matches with the injected scorer, created once and disposed on unmount", async () => {
+         const scorer: Scorer = {
+            kind: "webgpu",
+            scoreMap: vi.fn(scoreMap),
+            dispose: vi.fn(),
+         };
+         const createScorer = vi.fn(async () => scorer);
+         const { user, view } = setup(undefined, createScorer);
+
+         await user.keyboard("t");
+         await waitFor(() =>
+            expect(screen.getByRole("status")).toHaveTextContent(/^Tracked/),
+         );
+         expect(screen.getByRole("status")).toHaveAttribute(
+            "title",
+            "Matching on WebGPU",
+         );
+         expect(scorer.scoreMap).toHaveBeenCalledTimes(6); // 5 tracked + the lost frame
+         await user.keyboard("{Shift>}T{/Shift}");
+         await waitFor(() =>
+            expect(screen.getByRole("status")).toHaveTextContent(/backward/),
+         );
+         expect(createScorer).toHaveBeenCalledTimes(1);
+
+         view.unmount();
+         await waitFor(() => expect(scorer.dispose).toHaveBeenCalled());
       });
 
       it("stops with Escape and ignores other keys while tracking", async () => {
