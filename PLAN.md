@@ -146,8 +146,8 @@ disagrees with the tracks and model the lens.
 
 - [x] Show the solved points and their residuals on the frame, and list the
       worst tracks so they can be fixed or deleted.
-- [ ] Lens distortion in the solver (radial k1, k2), refined in the solve.
-- [ ] Carry distortion into the Blender export.
+- [x] Lens distortion in the solver (radial k1, k2), refined in the solve.
+- [x] Carry distortion into the Blender export.
 - [ ] Check on footage with visible lens distortion.
 
 ### 8 — Stretch

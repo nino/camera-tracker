@@ -20,6 +20,13 @@ pub struct Request {
     pub focal: f64,
     #[serde(default)]
     pub refine_focal: bool,
+    /// Radial distortion guess (camera.rs); 0 if absent.
+    #[serde(default)]
+    pub k1: f64,
+    #[serde(default)]
+    pub k2: f64,
+    #[serde(default)]
+    pub refine_distortion: bool,
     pub tracks: Vec<RequestTrack>,
 }
 
@@ -57,6 +64,8 @@ pub enum Response {
     #[serde(rename = "solved")]
     Solved {
         focal: f64,
+        k1: f64,
+        k2: f64,
         rms: f64,
         keyframes: [usize; 2],
         /// Solved frames only, in frame order.
@@ -94,6 +103,11 @@ pub fn run(request: &Request) -> Response {
             message: "The focal length must be positive.".into(),
         };
     }
+    if !(request.k1.is_finite() && request.k2.is_finite()) {
+        return Response::Failed {
+            message: "The distortion must be a number.".into(),
+        };
+    }
     let input = SolveInput {
         width: request.width,
         height: request.height,
@@ -101,6 +115,9 @@ pub fn run(request: &Request) -> Response {
         tracks,
         focal: request.focal,
         refine_focal: request.refine_focal,
+        k1: request.k1,
+        k2: request.k2,
+        refine_distortion: request.refine_distortion,
     };
     let solution = match solve(&input, &SolveOptions::default()) {
         Ok(solution) => solution,
@@ -113,6 +130,8 @@ pub fn run(request: &Request) -> Response {
     let ids: Vec<u32> = request.tracks.iter().map(|t| t.id).collect();
     Response::Solved {
         focal: solution.intrinsics.focal,
+        k1: solution.intrinsics.k1,
+        k2: solution.intrinsics.k2,
         rms: solution.rms,
         keyframes: [solution.keyframes.0, solution.keyframes.1],
         cameras: solution
@@ -202,6 +221,7 @@ mod tests {
         assert_eq!(response["cameras"].as_array().unwrap().len(), 20);
         assert_eq!(response["cameras"][0]["frame"], 0);
         assert!(response["rms"].as_f64().unwrap() < 0.3);
+        assert_eq!(response["k1"], 0.0);
         let first_id = response["points"][0]["id"].as_u64().unwrap();
         assert!(first_id >= 100);
         // The first keyframe is the world origin.
@@ -236,8 +256,27 @@ mod tests {
 mod dump {
     #[test]
     #[ignore]
+    fn run_file() {
+        let req = std::fs::read_to_string(std::env::var("REQ").unwrap()).unwrap();
+        let t = std::time::Instant::now();
+        let out = super::solve_json(&req);
+        eprintln!(
+            "NATIVE ms {} {}",
+            t.elapsed().as_millis(),
+            &out[..120.min(out.len())]
+        );
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
+            if let Some(c) = v["cameras"].as_array() {
+                let frames: Vec<_> = c.iter().map(|c| c["frame"].as_u64().unwrap()).collect();
+                eprintln!("NATIVE frames {frames:?}");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
     fn dump_request() {
-        use crate::synthetic::{dolly_scene, HEIGHT, WIDTH};
+        use crate::synthetic::{dolly_scene, wide_dolly_scene, HEIGHT, WIDTH};
         let env = |k: &str, d: usize| {
             std::env::var(k)
                 .ok()
@@ -246,7 +285,9 @@ mod dump {
         };
         let frames = env("FRAMES", 200);
         let window = env("WINDOW", frames);
-        let truth = dolly_scene(frames, env("POINTS", 300), 0.3, 77);
+        let wide = env("WIDE", 0) == 1;
+        let scene = if wide { wide_dolly_scene } else { dolly_scene };
+        let truth = scene(frames, env("POINTS", 300), 0.3, 77);
         let mut rng = crate::rng::Rng::new(5);
         let tracks: Vec<serde_json::Value> = (0..truth.points.len())
             .map(|i| {
@@ -260,7 +301,7 @@ mod dump {
                 serde_json::json!({"id": i, "keys": keys})
             })
             .collect();
-        let req = serde_json::json!({"width": WIDTH, "height": HEIGHT, "frameCount": frames, "focal": 800.0, "tracks": tracks});
+        let req = serde_json::json!({"width": WIDTH, "height": HEIGHT, "frameCount": frames, "focal": if wide { 450.0 } else { 800.0 }, "refineFocal": wide, "refineDistortion": wide, "tracks": tracks});
         std::fs::write(std::env::var("DUMP").unwrap(), req.to_string()).unwrap();
         let t = std::time::Instant::now();
         let out = super::solve_json(&req.to_string());

@@ -12,6 +12,8 @@ const atOrigin: SolvedCamera = {
 const solution: Solution = {
    status: "solved",
    focal: 100,
+   k1: 0,
+   k2: 0,
    rms: 0,
    keyframes: [3, 4],
    cameras: [atOrigin],
@@ -23,9 +25,11 @@ const solution: Solution = {
    outliers: [],
 };
 
+const pinhole = { focal: 100, k1: 0, k2: 0 };
+
 describe("reprojection", () => {
    it("projects through a pinhole centred on the frame", () => {
-      expect(project(atOrigin, 100, 640, 360, [1, -2, 10])).toEqual({
+      expect(project(atOrigin, pinhole, 640, 360, [1, -2, 10])).toEqual({
          x: 330,
          y: 160,
       });
@@ -34,10 +38,18 @@ describe("reprojection", () => {
    it("uses the camera's pose", () => {
       // Moved 1 unit right: the point appears 1 unit further left.
       const moved = { ...atOrigin, translation: [-1, 0, 0] as const };
-      expect(project(moved, 100, 640, 360, [1, 0, 10])).toEqual({
+      expect(project(moved, pinhole, 640, 360, [1, 0, 10])).toEqual({
          x: 320,
          y: 180,
       });
+   });
+
+   it("applies radial distortion", () => {
+      // Normalised (0.5, 0): r² = 0.25, d = 1 − 0.2·0.25 + 0.1·0.0625.
+      const lens = { focal: 100, k1: -0.2, k2: 0.1 };
+      const p = project(atOrigin, lens, 640, 360, [5, 0, 10])!;
+      expect(p.x).toBeCloseTo(320 + 100 * 0.5 * (1 - 0.05 + 0.00625), 9);
+      expect(p.y).toBe(180);
    });
 
    it("skips points behind the camera and unsolved frames", () => {

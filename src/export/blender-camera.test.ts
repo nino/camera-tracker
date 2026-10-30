@@ -86,6 +86,8 @@ describe("Blender camera export", () => {
       const solution: Solution = {
          status: "solved",
          focal: 960,
+         k1: -0.1,
+         k2: 0.02,
          rms: 0.5,
          keyframes: [0, 2],
          cameras: [camera(0, [0, 0, 0]), camera(2, [4, 0, 0])],
@@ -105,10 +107,12 @@ describe("Blender camera export", () => {
       );
       const data = JSON.parse(/^DATA = (.*)$/m.exec(script)![1]) as {
          lens: number;
+         focalPx: number;
          cameras: [number, number[]][];
          points: [string, number[]][];
       };
       expect(data.lens).toBe(18);
+      expect(data).toMatchObject({ focalPx: 960, k1: -0.1, k2: 0.02 });
       expect(data.cameras.map(([frame]) => frame)).toEqual([1, 3]);
       expect(data.cameras[1][1][3]).toBe(1);
       expect(data.points).toEqual([["Corner", [0, 2, 0]]]);

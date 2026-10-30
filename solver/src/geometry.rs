@@ -1,20 +1,20 @@
 //! Multi-view geometry for building an initial solve: essential matrices,
 //! relative pose, triangulation and camera resection.
 //!
-//! Everything here works in *normalised* image coordinates: a pixel `(u, v)`
-//! becomes `((u − cx) / f, (v − cy) / f)`, the point where its ray crosses the
-//! plane z = 1 in camera space. Thresholds in pixels are converted with the
-//! focal length by the caller.
+//! Everything here works in *normalised* image coordinates: a pixel becomes
+//! the point where its ray crosses the plane z = 1 in camera space (lens
+//! distortion removed; `Intrinsics::to_normalised`). Thresholds in pixels are
+//! converted with the focal length by the caller.
 
 use nalgebra::{
     DMatrix, Matrix3, Matrix3x4, Rotation3, SMatrix, SVector, Vector2, Vector3, Vector4,
 };
 
-use crate::camera::{projection_jacobian, Intrinsics, Pose, MIN_DEPTH};
+use crate::camera::{Intrinsics, Pose, MIN_DEPTH};
 
 /// Pixel → normalised image coordinates.
 pub fn normalise(k: &Intrinsics, pixel: &Vector2<f64>) -> Vector2<f64> {
-    Vector2::new((pixel.x - k.cx) / k.focal, (pixel.y - k.cy) / k.focal)
+    k.to_normalised(pixel)
 }
 
 /// A correspondence between two views, in normalised coordinates.
@@ -225,8 +225,8 @@ pub fn refine_pose(
             if p.z <= MIN_DEPTH {
                 continue;
             }
-            let r = Vector2::new(k.focal * p.x / p.z + k.cx, k.focal * p.y / p.z + k.cy) - pixel;
-            let jp = projection_jacobian(k.focal, &p);
+            let r = k.to_pixel(&Vector2::new(p.x / p.z, p.y / p.z)) - pixel;
+            let jp = k.point_jacobian(&p);
             let skew = Matrix3::new(
                 0.0, -rotated.z, rotated.y, rotated.z, 0.0, -rotated.x, -rotated.y, rotated.x, 0.0,
             );

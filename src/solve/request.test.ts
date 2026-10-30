@@ -32,7 +32,7 @@ describe("solveRequest", () => {
       const request = solveRequest(
          state,
          { width: 640, height: 360, frameCount: 10 },
-         { focalMm: 36, refineFocal: false },
+         { focalMm: 36, refineFocal: false, refineDistortion: true },
       );
       expect(request).toEqual({
          width: 640,
@@ -40,6 +40,9 @@ describe("solveRequest", () => {
          frameCount: 10,
          focal: 640,
          refineFocal: false,
+         k1: 0,
+         k2: 0,
+         refineDistortion: true,
          tracks: [
             {
                id,

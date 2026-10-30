@@ -23,6 +23,7 @@ export interface SolveSettings {
    /** Full-frame equivalent focal length guess, mm. */
    readonly focalMm: number;
    readonly refineFocal: boolean;
+   readonly refineDistortion: boolean;
 }
 
 export function solveRequest(
@@ -36,6 +37,9 @@ export function solveRequest(
       frameCount: clip.frameCount,
       focal: focalPixels(settings.focalMm, clip.width, clip.height),
       refineFocal: settings.refineFocal,
+      k1: 0,
+      k2: 0,
+      refineDistortion: settings.refineDistortion,
       tracks: serializeTracks(state).tracks.map(({ id, keys }) => ({
          id,
          keys,

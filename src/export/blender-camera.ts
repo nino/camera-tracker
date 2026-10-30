@@ -17,6 +17,12 @@ import type { Solution, SolvedCamera, Vec3 } from "../solve/solve-types";
  *   with y down, so the camera's matrix is W · Rᵀ · diag(1, −1, −1).
  * - Lens: sensor 36 mm on the longer side (fit Auto), so the focal length
  *   in mm is the same full-frame equivalent the app shows.
+ * - Lens distortion goes on the clip (Movie Clip Editor → Track → Camera →
+ *   Lens), as Blender's Polynomial model, whose k1 and k2 are ours exactly
+ *   (both normalise by the focal length in pixels about the frame centre).
+ *   Blender's camera renders without distortion; the clip's settings drive
+ *   the compositor's Movie Distortion node, which distorts the render to
+ *   match the plate.
  * - Scale is arbitrary (the solve fixes it only up to scale). The distance
  *   between the two keyframe cameras is 1 unit.
  */
@@ -78,6 +84,9 @@ export function blenderCameraScript(
       frameCount: info.frameCount,
       frameRate: info.frameRate,
       lens: round(focalMillimetres(solution.focal, info.width, info.height)),
+      focalPx: round(solution.focal),
+      k1: round(solution.k1),
+      k2: round(solution.k2),
       sensor: FILM_MM,
       rms: round(solution.rms),
       cameras: solution.cameras.map((camera) => {
@@ -100,7 +109,10 @@ export function blenderCameraScript(
 # another set. Scale is arbitrary: the two keyframe cameras are 1 unit apart.
 #
 # The clip, if it's in the .blend (the one named ${JSON.stringify(info.clipName)}, or the only one),
-# becomes the camera's background and sets the render size and frame range.
+# becomes the camera's background, and gets the solved lens (focal length and
+# distortion) in its tracking camera settings. Blender renders without lens
+# distortion; to match the plate, run renders through a Movie Distortion node
+# (Distort) set to this clip.
 
 import bpy
 from mathutils import Matrix
@@ -160,6 +172,14 @@ def main():
     if clip is not None:
         scene.active_clip = clip
         clip.frame_start = 1
+        # The solved lens, for the Movie Distortion node and further tracking.
+        lens = clip.tracking.camera
+        lens.focal_length_pixels = DATA["focalPx"]
+        lens.principal_point_pixels = (width / 2, height / 2)
+        lens.distortion_model = "POLYNOMIAL"
+        lens.k1 = DATA["k1"]
+        lens.k2 = DATA["k2"]
+        lens.k3 = 0
         cam_data.show_background_images = True
         background = cam_data.background_images.new()
         background.source = "MOVIE_CLIP"

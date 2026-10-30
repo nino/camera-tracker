@@ -6,6 +6,8 @@ import type { Solution } from "./solve-types";
 const solution: Solution = {
    status: "solved",
    focal: 100,
+   k1: 0,
+   k2: 0,
    rms: 0,
    keyframes: [0, 1],
    cameras: [

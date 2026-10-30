@@ -19,6 +19,8 @@ function solution(
    return {
       status: "solved",
       focal: 500,
+      k1: 0,
+      k2: 0,
       rms: 0.1,
       keyframes: [0, 1],
       cameras,
