@@ -43,6 +43,9 @@ and, if `solver/` changed (CI runs these too):
 cd solver && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
+`cargo test -- --ignored` also runs a slower sweep over 40 random scenes; run
+it when changing the solver's logic.
+
 and, if `src-tauri/` changed:
 
 ```sh
@@ -136,6 +139,9 @@ src/
 solver/                Rust camera solver crate (pure; no Tauri or I/O). cargo test.
   src/camera.rs          pinhole model, poses, projection
   src/bundle.rs          bundle adjustment (Levenberg–Marquardt, Schur complement)
+  src/geometry.rs        essential matrix, relative pose, triangulation, resection
+  src/solve.rs           tracks -> cameras + points (incremental SfM, outlier rejection)
+  src/rng.rs             deterministic RNG for RANSAC and tests
   src/synthetic.rs       test scenes with known cameras and points
 src-tauri/             Rust/Tauri shell
 PLAN.md                roadmap and design decisions
