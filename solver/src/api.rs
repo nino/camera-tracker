@@ -260,6 +260,9 @@ mod dump {
         let req = std::fs::read_to_string(std::env::var("REQ").unwrap()).unwrap();
         let t = std::time::Instant::now();
         let out = super::solve_json(&req);
+        if let Ok(path) = std::env::var("OUT") {
+            std::fs::write(path, &out).unwrap();
+        }
         eprintln!(
             "NATIVE ms {} {}",
             t.elapsed().as_millis(),
