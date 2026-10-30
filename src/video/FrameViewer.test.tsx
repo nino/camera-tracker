@@ -253,4 +253,54 @@ describe("FrameViewer", () => {
          expect(tracks()).toHaveTextContent("50.00, 40.00 (held)");
       });
    });
+
+   describe("onion-skinning", () => {
+      function setup() {
+         const user = userEvent.setup();
+         const { renderer, create } = fakeCreateRenderer();
+         const source = new FakeFrameSource({ frameCount: 10 });
+         render(<FrameViewer source={source} createRenderer={create} />);
+         return { user, renderer, source };
+      }
+
+      it("is off by default and toggles with O", async () => {
+         const { user, renderer, source } = setup();
+         await waitFor(() => expect(renderer.layers).toHaveLength(1));
+         await user.keyboard("{ArrowRight}{o}");
+
+         await waitFor(() =>
+            expect(renderer.layers.map((layer) => layer.index)).toEqual([
+               1, 0, 2,
+            ]),
+         );
+         expect(source.getFrames).toHaveBeenLastCalledWith([1, 0, 2]);
+         expect(renderer.layers[0]).toMatchObject({ opacity: 1 });
+         expect(renderer.layers[1]).toMatchObject({ opacity: 0.5 });
+         expect(screen.getByLabelText("Onion skin (O)")).toBeChecked();
+
+         await user.keyboard("{o}");
+         await waitFor(() => expect(renderer.layers).toHaveLength(1));
+      });
+
+      it("follows the before/after settings", async () => {
+         const { user, renderer } = setup();
+         await user.click(screen.getByLabelText("Onion skin (O)"));
+         const before = screen.getByLabelText("Before");
+         await user.clear(before);
+         await user.type(before, "3");
+         await user.keyboard("{Escape}");
+         await waitFor(() =>
+            // Frame 0 has nothing before it, so only the one "after" frame.
+            expect(renderer.layers.map((layer) => layer.index)).toEqual([0, 1]),
+         );
+      });
+
+      it("doesn't step frames while a settings field has focus", async () => {
+         const { user } = setup();
+         await user.click(screen.getByLabelText("Onion skin (O)"));
+         await user.click(screen.getByLabelText("After"));
+         await user.keyboard("{ArrowRight}");
+         expect(screen.getByText("Frame 1 / 10")).toBeInTheDocument();
+      });
+   });
 });

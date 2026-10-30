@@ -5,6 +5,8 @@ import {
    type CreateRenderer,
    type FrameRenderer,
 } from "../gpu/frame-renderer";
+import { OnionControls } from "../onion/OnionControls";
+import { defaultOnionSettings, onionLayers } from "../onion/onion";
 import { TrackList } from "../tracking/TrackList";
 import { TrackOverlay } from "../tracking/TrackOverlay";
 import { initialTrackState, tracksReducer } from "../tracking/tracks";
@@ -55,7 +57,7 @@ function stepForKey(event: KeyboardEvent, frameCount: number): number | null {
  *
  * Keys: ←/→ step frames (Shift ×10), Home/End jump to the ends. With a track
  * selected, Alt+arrows nudge it 1 px on this frame (Alt+Shift: 0.1 px),
- * Delete removes it, Escape deselects.
+ * Delete removes it, Escape deselects. O toggles onion-skinning.
  *
  * Frames are fetched by integer index only, and each sample is drawn in the
  * same synchronous step that receives it, then dropped (the source owns it).
@@ -75,6 +77,7 @@ export function FrameViewer({
       initialTrackState,
    );
    const selectedId = tracks.selectedId;
+   const [onion, setOnion] = React.useState(defaultOnionSettings);
    const canvasRef = React.useRef<HTMLCanvasElement>(null);
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
@@ -116,6 +119,27 @@ export function FrameViewer({
 
    React.useEffect(() => {
       function onKeyDown(event: KeyboardEvent) {
+         // Let form controls (onion settings) keep their own keys.
+         if (
+            event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLTextAreaElement ||
+            event.target instanceof HTMLSelectElement
+         ) {
+            return;
+         }
+         if (
+            (event.key === "o" || event.key === "O") &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey
+         ) {
+            event.preventDefault();
+            setOnion((settings) => ({
+               ...settings,
+               enabled: !settings.enabled,
+            }));
+            return;
+         }
          if (selectedId != null && handleTrackKey(event, selectedId)) {
             event.preventDefault();
             return;
@@ -160,13 +184,24 @@ export function FrameViewer({
       }
       // Stepping quickly fires several fetches; only the latest may draw.
       let stale = false;
-      source.getFrame(index).then(
-         (sample) => {
+      const layers = onionLayers(index, frameCount, onion);
+      const fetched =
+         layers.length === 1
+            ? source.getFrame(index).then((sample) => [sample])
+            : source.getFrames(layers.map((layer) => layer.index));
+      fetched.then(
+         (samples) => {
             if (stale) {
                return;
             }
             try {
-               renderer.draw(sample);
+               renderer.draw(
+                  layers.map((layer, i) => ({
+                     sample: samples[i],
+                     opacity: layer.opacity,
+                     tint: layer.tint,
+                  })),
+               );
                setError(null);
             } catch (err) {
                const message = err instanceof Error ? err.message : String(err);
@@ -186,7 +221,7 @@ export function FrameViewer({
       return () => {
          stale = true;
       };
-   }, [source, index, renderer]);
+   }, [source, index, renderer, frameCount, onion]);
 
    return (
       <div className="frame-viewer">
@@ -222,6 +257,7 @@ export function FrameViewer({
                {error}
             </p>
          )}
+         <OnionControls settings={onion} onChange={setOnion} />
          <TrackList frame={index} state={tracks} dispatch={dispatch} />
       </div>
    );

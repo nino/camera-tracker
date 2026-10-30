@@ -1,9 +1,13 @@
-import type { VideoSample } from "mediabunny";
-import type { CreateRenderer, FrameRenderer } from "../gpu/frame-renderer";
+import type {
+   CreateRenderer,
+   FrameLayer,
+   FrameRenderer,
+} from "../gpu/frame-renderer";
 
 /**
  * A renderer for tests. FakeFrameSource samples carry their frame index as
- * `timestamp`, so `drawn` lists the frame indices drawn, in order.
+ * `timestamp`, so `drawn` lists the main (first-layer) frame index of each
+ * draw, and `layers` the full layer list of the latest draw.
  */
 export class FakeRenderer implements FrameRenderer {
    /** Resolve to simulate a lost GPU device. */
@@ -13,8 +17,14 @@ export class FakeRenderer implements FrameRenderer {
    });
    constructor(readonly kind: FrameRenderer["kind"] = "webgpu") {}
    readonly drawn: number[] = [];
-   readonly draw = vi.fn((sample: VideoSample) => {
-      this.drawn.push(sample.timestamp);
+   layers: { index: number; opacity: number; tint: FrameLayer["tint"] }[] = [];
+   readonly draw = vi.fn((layers: readonly FrameLayer[]) => {
+      this.drawn.push(layers[0].sample.timestamp);
+      this.layers = layers.map(({ sample, opacity, tint }) => ({
+         index: sample.timestamp,
+         opacity,
+         tint,
+      }));
    });
    readonly dispose = vi.fn();
 }
