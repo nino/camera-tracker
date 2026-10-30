@@ -206,4 +206,16 @@ describe("SolvePanel", () => {
          screen.getByRole("button", { name: "Solve camera" }),
       ).toBeDisabled();
    });
+
+   it("exports a solve", async () => {
+      const { calls, solve } = controlledSolver();
+      const onExport = vi.fn();
+      renderPanel(solve, { onExport });
+      fireEvent.click(screen.getByRole("button", { name: "Solve camera" }));
+      await act(async () => calls[0].resolve(solved));
+      fireEvent.click(
+         screen.getByRole("button", { name: "Export camera for Blender" }),
+      );
+      expect(onExport).toHaveBeenCalledWith(solved);
+   });
 });

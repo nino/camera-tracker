@@ -328,7 +328,7 @@ describe("FrameViewer", () => {
          ]);
       });
 
-      it("solves the camera and seeks from the camera path", async () => {
+      it("solves the camera, seeks from the path and exports it", async () => {
          const solution: Solution = {
             status: "solved",
             focal: 200,
@@ -344,11 +344,14 @@ describe("FrameViewer", () => {
             outliers: [],
          };
          const solveCamera = vi.fn<SolveCamera>().mockResolvedValue(solution);
+         const saveFile = vi.fn();
          render(
             <FrameViewer
                source={new FakeFrameSource({ width: 200, height: 100 })}
                createRenderer={fakeCreateRenderer().create}
                solveCamera={solveCamera}
+               clipName="shot.mov"
+               saveFile={saveFile}
             />,
          );
          expect(
@@ -377,6 +380,13 @@ describe("FrameViewer", () => {
          ).toBeInTheDocument();
          clickCamera(solution, 4);
          expect(screen.getByText(/^Frame 5 \//)).toBeInTheDocument();
+         fireEvent.click(
+            screen.getByRole("button", { name: "Export camera for Blender" }),
+         );
+         expect(saveFile).toHaveBeenCalledWith(
+            "shot.camera.py",
+            expect.stringContaining('"points":[]'),
+         );
       });
 
       it("unkeys a frame from the track list", async () => {
