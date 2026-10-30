@@ -32,6 +32,8 @@ export class FakeFrameSource implements FrameSource {
          throw new Error(`Frame ${index} out of range.`);
       }
       return {
+         timestamp: index,
+         rotation: 0,
          draw: (...args: unknown[]) => this.draws.push([index, ...args]),
          close: () => {
             throw new Error("Callers must not close borrowed samples.");

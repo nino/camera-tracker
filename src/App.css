@@ -83,3 +83,9 @@ body {
    margin: 0;
    font-variant-numeric: tabular-nums;
 }
+
+.renderer-kind {
+   margin: 0;
+   font-size: 12px;
+   opacity: 0.5;
+}

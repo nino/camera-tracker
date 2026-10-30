@@ -28,7 +28,7 @@ doing most of the implementation.
 ```
 .mp4 ──demux──► encoded packets ──decode──► VideoSample ──► GPU texture
        (mediabunny)              (WebCodecs)         (.toVideoFrame +
-                                                      importExternalTexture)
+                                                      copyExternalImageToTexture)
 ```
 
 The spine everything hangs off is the `FrameSource` interface
@@ -47,14 +47,23 @@ later feature is "implement against FrameSource", never "rearchitect".
 - **Seek by integer index through an authoritative per-frame timestamp table**,
   NOT `index / frameRate` — variable-frame-rate footage would land on the wrong
   frame. `frameRate` is metadata for UI timecode + Blender export only.
+- **Upload frames with `copyExternalImageToTexture`, not `importExternalTexture`.**
+  Both convert the video's colour space to sRGB, so colour wasn't the deciding
+  factor. The copy gives a regular `texture_2d` that outlives the VideoFrame,
+  which onion-skinning (several frames resident at once) and compute-shader
+  tracking (milestone 4) both want; an external texture expires as soon as its
+  frame closes. The copy costs one GPU blit per frame, which is negligible
+  here. It also works in headless Chromium, where `importExternalTexture`
+  doesn't.
+- **WebGPU with a canvas 2D fallback.** The viewer draws through a small
+  `FrameRenderer` interface (`src/gpu/frame-renderer.ts`); without WebGPU it
+  falls back to mediabunny's 2D `.draw()`.
 
 ## Parked considerations
 
 - **Coded vs display dimensions.** Currently exposing _display_ size. Trackers may
   need _coded_ (raw sample-grid) pixels for sub-pixel precision. Revisit at
   milestone 2.
-- **`importExternalTexture` vs `copyExternalImageToTexture`** for the WebGPU
-  upload — colorspace-handling tradeoff. Decide when we write the renderer (1b).
 
 ## Milestones
 
@@ -76,8 +85,8 @@ infrastructure later steps need.
 - [x] **Cache:** windowed LRU eviction (close evicted samples; keep a warm window
       around the playhead).
 - [x] **Batched decode:** `getFrames` via `samplesAtTimestamps`.
-- [ ] **1b first WebGPU:** replace `.draw()` with a textured-quad renderer sampling
-      the frame as an external texture.
+- [x] **1b first WebGPU:** replace `.draw()` with a textured-quad renderer
+      sampling the frame texture (handles display rotation).
 
 ### 2 — Manual tracker
 

@@ -99,10 +99,14 @@ src/
     cached-frame-source.ts FrameSource over any decoder: LRU cache, pinning, ownership
     frame-cache.ts         the LRU cache itself (pure, unit-tested)
     mediabunny-source.ts   opens a file with mediabunny; extends CachedFrameSource
-    FrameViewer.tsx        draws the current frame, keyboard stepping
+    FrameViewer.tsx        shows the current frame, keyboard stepping
+  gpu/
+    frame-renderer.ts      FrameRenderer interface; picks WebGPU or canvas 2D
+    webgpu-frame-renderer.ts  WGSL shader, createFrameDrawer (any target), canvas renderer
   test/
     setup.ts               Vitest setup (jest-dom matchers, quiet canvas stub)
     fake-frame-source.ts   FakeFrameSource for component tests
+    fake-renderer.ts       FakeRenderer: records which frames were drawn
 src-tauri/             Rust/Tauri shell
 PLAN.md                roadmap and design decisions
 ```
@@ -137,8 +141,30 @@ jsdom has no WebCodecs, no WebGPU, and no canvas 2D context
   pass it in (as a prop or argument) from the app's entry point.
 - Code that draws must tolerate a `null` 2D context.
 - Keep GPU code behind a small interface so the logic around it stays
-  testable. Shader correctness is checked by hand in `bun run tauri dev` for
-  now; note in the PR what you checked and what you couldn't.
+  testable (see `FrameRenderer` and `createFrameDrawer` in `src/gpu/`). Note
+  in the PR what you checked and what you couldn't.
+
+### Checking in a real browser
+
+Chromium and Playwright are available in cloud sessions
+(`require("playwright")`), and `ffmpeg` can make test clips
+(`ffmpeg -f lavfi -i testsrc=size=320x240:rate=24:duration=5 -c:v libx264
+-pix_fmt yuv420p clip.mp4`; add `-display_rotation 90` before `-i` for a
+rotated clip). Run `bun run dev`, then drive `http://localhost:1420`. From
+`page.evaluate` you can `import("/src/…/*.ts")` and call app code directly.
+
+- **WebCodecs** works headless: H.264 MP4 and VP9 WebM both decode.
+- **WebGPU** needs `chromium.launch({ args: ["--enable-unsafe-webgpu"] })`
+  and the page must be on `localhost` (a secure context). It runs on
+  SwiftShader, with two quirks: a WebGPU canvas never shows its pixels
+  (screenshots and `drawImage` read back black), and copying a `VideoFrame`
+  to the GPU (`copyExternalImageToTexture` or `importExternalTexture`) crashes
+  the GPU process. To check rendering, draw into an offscreen texture with
+  `createFrameDrawer` and read it back with `copyTextureToBuffer`, passing the
+  frame as an `ImageBitmap` (`createImageBitmap(videoFrame)`). Compare against
+  `sample.draw()` on an `OffscreenCanvas`; the two should match exactly.
+- Only the Tauri app (`bun run tauri dev`, macOS) exercises WKWebView. Agents
+  in the cloud can't run it, so call that out in the PR when it matters.
 
 ## Architecture rules
 
