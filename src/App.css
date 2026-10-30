@@ -202,3 +202,7 @@ body {
    color: #9fd3a8;
    font-size: 0.9rem;
 }
+
+.export-button {
+   margin-top: 0.5rem;
+}

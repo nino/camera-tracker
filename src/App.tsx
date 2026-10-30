@@ -119,6 +119,7 @@ function App({ openSource }: AppProps) {
                key={state.id}
                source={state.source}
                clipKey={state.clipKey}
+               clipName={state.name}
             />
          )}
       </main>

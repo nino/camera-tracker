@@ -6,6 +6,8 @@ import {
    type CreateRenderer,
    type FrameRenderer,
 } from "../gpu/frame-renderer";
+import { blenderScript, blenderScriptName } from "../export/blender";
+import { downloadText } from "../export/download";
 import { OnionControls } from "../onion/OnionControls";
 import { defaultOnionSettings, onionLayers } from "../onion/onion";
 import { TrackList } from "../tracking/TrackList";
@@ -37,6 +39,10 @@ export interface FrameViewerProps {
     * Without one, tracks aren't saved.
     */
    clipKey?: string;
+   /** The clip's file name, used for exports. */
+   clipName?: string;
+   /** Saves an exported file (a Python script). Defaults to a download. */
+   saveFile?: (filename: string, text: string) => void;
    /** Picks the drawing backend. Defaults to WebGPU with a canvas 2D fallback. */
    createRenderer?: CreateRenderer;
    /**
@@ -98,6 +104,8 @@ function stepForKey(event: KeyboardEvent, frameCount: number): number | null {
 export function FrameViewer({
    source,
    clipKey,
+   clipName = "clip",
+   saveFile = (name, text) => downloadText(name, text, "text/x-python"),
    createRenderer = defaultCreateRenderer,
    createLumaReader = defaultCreateLumaReader,
    createScorer = defaultCreateScorer,
@@ -196,6 +204,25 @@ export function FrameViewer({
       },
       [source, width, height, createLumaReader, createScorer, tracks],
    );
+   async function exportForBlender() {
+      try {
+         // The rotation lets the script handle a Blender that ignores it.
+         const rotation = (await source.getFrame(0)).rotation;
+         saveFile(
+            blenderScriptName(clipName),
+            blenderScript(tracks, {
+               clipName,
+               width,
+               height,
+               frameCount,
+               frameRate: source.metadata.frameRate,
+               rotation,
+            }),
+         );
+      } catch (err) {
+         setError(err instanceof Error ? err.message : String(err));
+      }
+   }
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
    // A canvas gets one context type for life, so the renderer is created once
@@ -405,6 +432,15 @@ export function FrameViewer({
          )}
          <OnionControls settings={onion} onChange={setOnion} />
          <TrackList frame={index} state={tracks} dispatch={dispatch} />
+         {tracks.tracks.length > 0 && (
+            <button
+               type="button"
+               className="export-button"
+               onClick={() => void exportForBlender()}
+            >
+               Export for Blender
+            </button>
+         )}
       </div>
    );
 }

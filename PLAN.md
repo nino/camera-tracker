@@ -120,8 +120,10 @@ infrastructure later steps need.
 
 ### 5 — Export to Blender
 
-- [ ] Emit tracking data in a format Blender's movie clip editor can ingest
-      (frame-indexed, using `frameRate`).
+- [x] Emit tracking data in a format Blender's movie clip editor can ingest
+      (frame-indexed, using `frameRate`). Blender has no 2D-track import
+      format, so "Export for Blender" saves a Python script that creates the
+      tracks through `bpy` (`src/export/blender.ts`).
 
 ### 6 — Camera solver
 

@@ -113,6 +113,9 @@ src/
   onion/
     onion.ts               which neighbour frames to blend, with what opacity/tint (pure)
     OnionControls.tsx      onion-skin settings UI
+  export/
+    blender.ts             tracks -> Python script that recreates them in Blender (pure)
+    download.ts            save text as a browser download
   gpu/
     frame-renderer.ts      FrameRenderer interface; picks WebGPU or canvas 2D
     webgpu-frame-renderer.ts  WGSL shader, createFrameDrawer (any target), canvas renderer
@@ -180,6 +183,12 @@ rotated clip). For motion, overlay a moving box:
   `createFrameDrawer` and read it back with `copyTextureToBuffer`, passing the
   frame as an `ImageBitmap` (`createImageBitmap(videoFrame)`). Compare against
   `sample.draw()` on an `OffscreenCanvas`; the two should match exactly.
+- **Blender** runs headless from PyPI: `python3 -m venv bpyenv &&
+bpyenv/bin/pip install bpy` (Blender 5.x; needs the matching Python, 3.13
+  for 5.2). Load a clip with `bpy.data.movieclips.load(path)` and `exec` an
+  exported script to check it. Blender's clip frame N is the Nth decoded
+  frame, so `ffmpeg -i clip.mp4 -f rawvideo -pix_fmt gray` gives the pixels
+  to check markers against.
 - Only the Tauri app (`bun run tauri dev`, macOS) exercises WKWebView. Agents
   in the cloud can't run it, so call that out in the PR when it matters.
 
