@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FakeFrameSource } from "../test/fake-frame-source";
+import { blobScene, renderLuma } from "../test/synthetic-scene";
 import { FakeRenderer, fakeCreateRenderer } from "../test/fake-renderer";
 import { FrameViewer } from "./FrameViewer";
 
@@ -281,6 +282,122 @@ describe("FrameViewer", () => {
          await user.click(screen.getByRole("button", { name: "Unkey frame" }));
          expect(tracks()).toHaveTextContent("1 key");
          expect(tracks()).toHaveTextContent("50.00, 40.00 (held)");
+      });
+   });
+
+   describe("auto-tracking", () => {
+      /** Feature moves 1 px right per frame and vanishes from frame 6. */
+      const scene = (frame: number) =>
+         frame < 6
+            ? blobScene(frame, 0)
+            : renderLuma(
+                 100,
+                 80,
+                 (x, y) => Math.sin(x * 1.7) * Math.cos(y * 2.3),
+              );
+
+      function setup(
+         source = new FakeFrameSource({
+            frameCount: 10,
+            width: 100,
+            height: 80,
+         }),
+      ) {
+         const user = userEvent.setup();
+         render(
+            <FrameViewer
+               source={source}
+               createRenderer={fakeCreateRenderer().create}
+               // FakeFrameSource samples carry their index as `timestamp`.
+               createLumaReader={() => (sample) => scene(sample.timestamp)}
+            />,
+         );
+         const svg = screen.getByTestId("track-overlay");
+         vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+            left: 0,
+            top: 0,
+            width: 100,
+            height: 80,
+         } as DOMRect);
+         fireEvent.pointerDown(svg.querySelector("rect")!, {
+            button: 0,
+            clientX: 50.5,
+            clientY: 42.5,
+         });
+         const tracks = () => screen.getByRole("list", { name: "Tracks" });
+         return { user, tracks, source };
+      }
+
+      it("tracks the selected track forward with T until the feature is lost", async () => {
+         const { user, tracks } = setup();
+         await user.keyboard("t");
+         await waitFor(() =>
+            expect(screen.getByRole("status")).toHaveTextContent(
+               /^Tracked Track 1 forward 5 frames; lost the feature \(score 0\.\d\d\)\.$/,
+            ),
+         );
+         // The playhead follows the track, so it ends on the last tracked frame.
+         expect(screen.getByText("Frame 6 / 10")).toBeInTheDocument();
+         expect(tracks()).toHaveTextContent("55.50, 42.50");
+         expect(tracks()).toHaveTextContent("6 keys");
+      });
+
+      it("tracks backward with Shift+T", async () => {
+         const { user, tracks } = setup();
+         // Re-key on frame 6, where the feature has moved 5 px.
+         for (let i = 0; i < 5; i++) {
+            await user.keyboard("{ArrowRight}");
+         }
+         await user.keyboard(
+            "{Alt>}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{/Alt}",
+         );
+         expect(tracks()).toHaveTextContent("55.50, 42.50");
+         await user.keyboard("{Shift>}T{/Shift}");
+         await waitFor(() =>
+            expect(screen.getByRole("status")).toHaveTextContent(
+               "Tracked Track 1 backward 5 frames; reached the end of the clip.",
+            ),
+         );
+         expect(screen.getByText("Frame 1 / 10")).toBeInTheDocument();
+         expect(tracks()).toHaveTextContent("50.50, 42.50");
+      });
+
+      it("stops with Escape and ignores other keys while tracking", async () => {
+         const source = new FakeFrameSource({
+            frameCount: 10,
+            width: 100,
+            height: 80,
+         });
+         const getFrame = source.getFrame.getMockImplementation()!;
+         let release = () => {};
+         const gate = new Promise<void>((resolve) => (release = resolve));
+         source.getFrame.mockImplementation(async (index: number) => {
+            if (index === 3) {
+               await gate;
+            }
+            return getFrame(index);
+         });
+         const { user, tracks } = setup(source);
+
+         await user.keyboard("t");
+         await waitFor(() =>
+            expect(screen.getByRole("status")).toHaveTextContent(
+               "Tracking Track 1 forward: 2 frames (Escape to stop)",
+            ),
+         );
+         await user.keyboard("{ArrowRight}{Delete}");
+         expect(screen.getByText("Frame 3 / 10")).toBeInTheDocument();
+         await user.keyboard("{Escape}");
+         act(() => release());
+         await waitFor(() =>
+            expect(screen.getByRole("status")).toHaveTextContent(
+               "Tracked Track 1 forward 2 frames; cancelled.",
+            ),
+         );
+         expect(tracks()).toHaveTextContent("3 keys");
+         // The track stays selected, so Escape now deselects as usual.
+         await user.keyboard("{Escape}");
+         expect(screen.queryByRole("button", { pressed: true })).toBeNull();
       });
    });
 

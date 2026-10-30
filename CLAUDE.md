@@ -106,6 +106,10 @@ src/
     TrackList.tsx          track list with positions and per-frame keys
     serialize.ts           versioned JSON form of tracks (validated on load)
     storage.ts             per-clip autosave in localStorage
+    match.ts               NCC pattern matching + sub-pixel refinement (pure, CPU reference)
+    autotrack.ts           follows a track frame by frame until lost/edge/end/cancel
+    luma.ts                sample -> luma image via OffscreenCanvas (browser only)
+    tracking-status.ts     status line text for a tracking run
   onion/
     onion.ts               which neighbour frames to blend, with what opacity/tint (pure)
     OnionControls.tsx      onion-skin settings UI
@@ -116,6 +120,7 @@ src/
     setup.ts               Vitest setup (jest-dom matchers, quiet canvas stub)
     fake-frame-source.ts   FakeFrameSource for component tests
     fake-renderer.ts       FakeRenderer: records which frames were drawn
+    synthetic-scene.ts     textured luma test images (Gaussian blobs) for tracking tests
 src-tauri/             Rust/Tauri shell
 PLAN.md                roadmap and design decisions
 ```

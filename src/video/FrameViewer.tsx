@@ -1,3 +1,4 @@
+import type { VideoSample } from "mediabunny";
 import React from "react";
 import {
    createCanvas2dRenderer,
@@ -9,8 +10,19 @@ import { OnionControls } from "../onion/OnionControls";
 import { defaultOnionSettings, onionLayers } from "../onion/onion";
 import { TrackList } from "../tracking/TrackList";
 import { TrackOverlay } from "../tracking/TrackOverlay";
+import { autoTrack } from "../tracking/autotrack";
+import { createLumaReader as defaultCreateLumaReader } from "../tracking/luma";
+import type { LumaImage } from "../tracking/match";
+import {
+   trackingStatusText,
+   type TrackingStatus,
+} from "../tracking/tracking-status";
 import { loadTracks, saveTracks } from "../tracking/storage";
-import { initialTrackState, tracksReducer } from "../tracking/tracks";
+import {
+   initialTrackState,
+   positionAt,
+   tracksReducer,
+} from "../tracking/tracks";
 import { clampFrame } from "./frame-index";
 import type { FrameSource } from "./frame-source";
 
@@ -23,6 +35,14 @@ export interface FrameViewerProps {
    clipKey?: string;
    /** Picks the drawing backend. Defaults to WebGPU with a canvas 2D fallback. */
    createRenderer?: CreateRenderer;
+   /**
+    * Makes the pixel reader auto-tracking matches against. Defaults to an
+    * OffscreenCanvas reader; tests inject synthetic images.
+    */
+   createLumaReader?: (
+      width: number,
+      height: number,
+   ) => (sample: VideoSample) => LumaImage;
 }
 
 /** Arrow key -> unit direction, or `null` for other keys. */
@@ -63,7 +83,8 @@ function stepForKey(event: KeyboardEvent, frameCount: number): number | null {
  *
  * Keys: ←/→ step frames (Shift ×10), Home/End jump to the ends. With a track
  * selected, Alt+arrows nudge it 1 px on this frame (Alt+Shift: 0.1 px),
- * Delete removes it, Escape deselects. O toggles onion-skinning.
+ * Delete removes it, Escape deselects, T tracks it forward automatically
+ * from this frame (Shift+T: backward; Escape stops). O toggles onion-skinning.
  *
  * Frames are fetched by integer index only, and each sample is drawn in the
  * same synchronous step that receives it, then dropped (the source owns it).
@@ -72,6 +93,7 @@ export function FrameViewer({
    source,
    clipKey,
    createRenderer = defaultCreateRenderer,
+   createLumaReader = defaultCreateLumaReader,
 }: FrameViewerProps) {
    const { frameCount, width, height } = source.metadata;
    const [index, setIndex] = React.useState(0);
@@ -91,6 +113,65 @@ export function FrameViewer({
    const selectedId = tracks.selectedId;
    const [onion, setOnion] = React.useState(defaultOnionSettings);
    const canvasRef = React.useRef<HTMLCanvasElement>(null);
+   const [trackingStatus, setTrackingStatus] =
+      React.useState<TrackingStatus | null>(null);
+   // The running auto-track, if any. Other keys are ignored while it runs.
+   const trackingRef = React.useRef<AbortController | null>(null);
+   const readLumaRef = React.useRef<((s: VideoSample) => LumaImage) | null>(
+      null,
+   );
+   React.useEffect(() => () => trackingRef.current?.abort(), []);
+
+   const startTracking = React.useCallback(
+      (id: number, from: number, direction: 1 | -1) => {
+         const track = tracks.tracks.find((t) => t.id === id);
+         const placement = track && positionAt(track, from);
+         if (track == null || placement == null) {
+            return;
+         }
+         let readLuma;
+         try {
+            readLuma = readLumaRef.current ??= createLumaReader(width, height);
+         } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+            return;
+         }
+         const controller = new AbortController();
+         trackingRef.current = controller;
+         const status: TrackingStatus = {
+            name: track.name,
+            direction,
+            frames: 0,
+         };
+         setTrackingStatus(status);
+         autoTrack({
+            source,
+            readLuma,
+            from,
+            point: placement.point,
+            direction,
+            signal: controller.signal,
+            onStep: (frame, point) => {
+               dispatch({ type: "move", id, frame, point });
+               setIndex(frame);
+               setTrackingStatus({ ...status, frames: ++status.frames });
+            },
+         })
+            .then(
+               (result) => setTrackingStatus({ ...status, result }),
+               (err: unknown) => {
+                  setTrackingStatus(null);
+                  setError(err instanceof Error ? err.message : String(err));
+               },
+            )
+            .finally(() => {
+               if (trackingRef.current === controller) {
+                  trackingRef.current = null;
+               }
+            });
+      },
+      [source, width, height, createLumaReader, tracks],
+   );
    const create = gpuFailure == null ? createRenderer : createCanvas2dRenderer;
 
    // A canvas gets one context type for life, so the renderer is created once
@@ -139,6 +220,13 @@ export function FrameViewer({
          ) {
             return;
          }
+         if (trackingRef.current != null) {
+            if (event.key === "Escape") {
+               event.preventDefault();
+               trackingRef.current.abort();
+            }
+            return;
+         }
          if (
             (event.key === "o" || event.key === "O") &&
             !event.altKey &&
@@ -184,11 +272,20 @@ export function FrameViewer({
             dispatch({ type: "select", id: null });
             return true;
          }
+         if (
+            (event.key === "t" || event.key === "T") &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey
+         ) {
+            startTracking(id, index, event.shiftKey ? -1 : 1);
+            return true;
+         }
          return false;
       }
       window.addEventListener("keydown", onKeyDown);
       return () => window.removeEventListener("keydown", onKeyDown);
-   }, [frameCount, selectedId, index]);
+   }, [frameCount, selectedId, index, startTracking]);
 
    React.useEffect(() => {
       if (renderer == null) {
@@ -262,6 +359,11 @@ export function FrameViewer({
             <p className="renderer-kind" title={gpuFailure ?? undefined}>
                {renderer.kind === "webgpu" ? "WebGPU" : "Canvas 2D"}
                {gpuFailure != null && " (WebGPU failed, see tooltip)"}
+            </p>
+         )}
+         {trackingStatus != null && (
+            <p className="tracking-status" role="status">
+               {trackingStatusText(trackingStatus)}
             </p>
          )}
          {error != null && (

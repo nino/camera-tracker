@@ -196,3 +196,9 @@ body {
 .onion-controls input[type="range"] {
    width: 6em;
 }
+
+.tracking-status {
+   margin: 0.25rem 0;
+   color: #9fd3a8;
+   font-size: 0.9rem;
+}
