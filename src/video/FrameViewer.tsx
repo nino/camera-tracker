@@ -29,6 +29,9 @@ import {
    positionAt,
    tracksReducer,
 } from "../tracking/tracks";
+import { SolvePanel } from "../solve/SolvePanel";
+import type { SolveCamera } from "../solve/solve-types";
+import { createWorkerSolver } from "../solve/worker-solver";
 import { clampFrame } from "./frame-index";
 import type { FrameSource } from "./frame-source";
 
@@ -55,7 +58,14 @@ export interface FrameViewerProps {
    ) => (sample: VideoSample) => LumaImage;
    /** Picks the score map for auto-tracking. Defaults to WebGPU, else CPU. */
    createScorer?: () => Promise<Scorer>;
+   /** Runs a camera solve. Defaults to the WebAssembly solver in a worker. */
+   solveCamera?: SolveCamera;
 }
+
+// One worker for the app; it starts on the first solve.
+let sharedSolver: SolveCamera | null = null;
+const defaultSolveCamera: SolveCamera = (request, signal) =>
+   (sharedSolver ??= createWorkerSolver())(request, signal);
 
 /** Arrow key -> unit direction, or `null` for other keys. */
 function arrowDirection(key: string): [number, number] | null {
@@ -109,6 +119,7 @@ export function FrameViewer({
    createRenderer = defaultCreateRenderer,
    createLumaReader = defaultCreateLumaReader,
    createScorer = defaultCreateScorer,
+   solveCamera = defaultSolveCamera,
 }: FrameViewerProps) {
    const { frameCount, width, height } = source.metadata;
    const [index, setIndex] = React.useState(0);
@@ -440,6 +451,17 @@ export function FrameViewer({
             >
                Export for Blender
             </button>
+         )}
+         {tracks.tracks.length > 0 && (
+            <SolvePanel
+               tracks={tracks}
+               width={width}
+               height={height}
+               frameCount={frameCount}
+               frame={index}
+               onSeek={setIndex}
+               solveCamera={solveCamera}
+            />
          )}
       </div>
    );

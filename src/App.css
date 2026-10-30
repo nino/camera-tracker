@@ -206,3 +206,66 @@ body {
 .export-button {
    margin-top: 0.5rem;
 }
+
+.solve-panel {
+   display: flex;
+   flex-direction: column;
+   align-items: center;
+   gap: 8px;
+}
+
+.solve-controls {
+   display: flex;
+   flex-wrap: wrap;
+   align-items: center;
+   gap: 12px;
+}
+
+.solve-controls input[type="number"] {
+   width: 5em;
+}
+
+.solve-status,
+.solve-summary,
+.solve-stale {
+   margin: 0;
+   font-variant-numeric: tabular-nums;
+}
+
+.solve-stale {
+   font-size: 12px;
+   opacity: 0.7;
+}
+
+.camera-path {
+   width: 240px;
+   height: 240px;
+   background: #111114;
+   border-radius: 6px;
+}
+
+.solved-point {
+   fill: #8a8a93;
+}
+
+.camera-line {
+   fill: none;
+   stroke: #646cff;
+}
+
+.camera-stop {
+   fill: transparent;
+   cursor: pointer;
+}
+
+.camera-stop:hover {
+   fill: #646cff;
+}
+
+.current-camera line {
+   stroke: #3ddc97;
+}
+
+.current-camera circle {
+   fill: #3ddc97;
+}

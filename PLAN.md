@@ -135,7 +135,7 @@ Recover the 3D camera path from 2D tracks. **Rust lives here** (`solver/`).
 - [x] Initial guess from tracks alone: two-view start (essential matrix),
       triangulation, then add cameras one by one (resection), with outlier
       rejection.
-- [ ] Run the solver from the app and show the result (solve error, camera
+- [x] Run the solver from the app and show the result (solve error, camera
       path).
 - [ ] Export the solved camera to Blender.
 
