@@ -9,3 +9,6 @@ import "@testing-library/jest-dom/vitest";
 // getContext() call. Return null quietly instead; tests that need a context
 // spy on getContext themselves.
 HTMLCanvasElement.prototype.getContext = () => null;
+
+// Tracks autosave to localStorage; don't let one test's saves leak into the next.
+afterEach(() => localStorage.clear());

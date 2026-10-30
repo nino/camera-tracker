@@ -104,6 +104,8 @@ src/
     tracks.ts              track data model + reducer (pure; positions in display px)
     TrackOverlay.tsx       SVG layer over the frame: add, select, drag markers
     TrackList.tsx          track list with positions and per-frame keys
+    serialize.ts           versioned JSON form of tracks (validated on load)
+    storage.ts             per-clip autosave in localStorage
   onion/
     onion.ts               which neighbour frames to blend, with what opacity/tint (pure)
     OnionControls.tsx      onion-skin settings UI

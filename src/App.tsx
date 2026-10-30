@@ -1,6 +1,7 @@
 import React from "react";
 import "./App.css";
 import type { FrameSource } from "./video/frame-source";
+import { clipKeyForFile } from "./tracking/storage";
 import { FrameViewer } from "./video/FrameViewer";
 
 export interface AppProps {
@@ -14,7 +15,13 @@ export interface AppProps {
 type LoadState =
    | { status: "empty" }
    | { status: "loading"; name: string }
-   | { status: "ready"; id: number; name: string; source: FrameSource }
+   | {
+        status: "ready";
+        id: number;
+        name: string;
+        clipKey: string;
+        source: FrameSource;
+     }
    | { status: "error"; message: string };
 
 function App({ openSource }: AppProps) {
@@ -36,7 +43,13 @@ function App({ openSource }: AppProps) {
             opened.dispose();
             return;
          }
-         setState({ status: "ready", id, name: file.name, source: opened });
+         setState({
+            status: "ready",
+            id,
+            name: file.name,
+            clipKey: clipKeyForFile(file),
+            source: opened,
+         });
       } catch (err) {
          if (id === openId.current) {
             const message = err instanceof Error ? err.message : String(err);
@@ -102,7 +115,11 @@ function App({ openSource }: AppProps) {
          )}
          {state.status === "ready" && (
             // Keyed so the playhead resets to frame 0 for each new file.
-            <FrameViewer key={state.id} source={state.source} />
+            <FrameViewer
+               key={state.id}
+               source={state.source}
+               clipKey={state.clipKey}
+            />
          )}
       </main>
    );

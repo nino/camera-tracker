@@ -244,6 +244,36 @@ describe("FrameViewer", () => {
          ).toBeInTheDocument();
       });
 
+      it("restores a clip's tracks when it is opened again", () => {
+         const source = new FakeFrameSource({ width: 200, height: 100 });
+         const view = () => (
+            <FrameViewer
+               source={source}
+               clipKey="clip-1"
+               createRenderer={fakeCreateRenderer().create}
+            />
+         );
+         const { unmount } = render(view());
+         const svg = screen.getByTestId("track-overlay");
+         vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+            left: 0,
+            top: 0,
+            width: 200,
+            height: 100,
+         } as DOMRect);
+         fireEvent.pointerDown(svg.querySelector("rect")!, {
+            button: 0,
+            clientX: 12,
+            clientY: 34,
+         });
+         unmount();
+
+         render(view());
+         expect(screen.getByRole("list", { name: "Tracks" })).toHaveTextContent(
+            "12.00, 34.00",
+         );
+      });
+
       it("unkeys a frame from the track list", async () => {
          const { user, tracks } = setup();
          await user.keyboard("{ArrowRight}{Alt>}{ArrowRight}{/Alt}");
