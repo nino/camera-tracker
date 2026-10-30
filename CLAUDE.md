@@ -100,6 +100,10 @@ src/
     frame-cache.ts         the LRU cache itself (pure, unit-tested)
     mediabunny-source.ts   opens a file with mediabunny; extends CachedFrameSource
     FrameViewer.tsx        shows the current frame, keyboard stepping
+  tracking/
+    tracks.ts              track data model + reducer (pure; positions in display px)
+    TrackOverlay.tsx       SVG layer over the frame: add, select, drag markers
+    TrackList.tsx          track list with positions and per-frame keys
   gpu/
     frame-renderer.ts      FrameRenderer interface; picks WebGPU or canvas 2D
     webgpu-frame-renderer.ts  WGSL shader, createFrameDrawer (any target), canvas renderer

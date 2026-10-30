@@ -55,15 +55,19 @@ later feature is "implement against FrameSource", never "rearchitect".
   frame closes. The copy costs one GPU blit per frame, which is negligible
   here. It also works in headless Chromium, where `importExternalTexture`
   doesn't.
+- **Track positions are float _display_ pixels** (after rotation and pixel
+  aspect; origin at the frame's top-left corner, so pixel centres sit at
+  `.5`). That is the space the viewer draws in and what Blender's movie clip
+  editor normalises against. Floats keep sub-pixel precision, and display ↔
+  coded is a fixed linear map (rotation + pixel aspect), so the coded position
+  can always be derived if a tracker ever needs raw sample-grid pixels.
 - **WebGPU with a canvas 2D fallback.** The viewer draws through a small
   `FrameRenderer` interface (`src/gpu/frame-renderer.ts`); without WebGPU it
   falls back to mediabunny's 2D `.draw()`.
 
 ## Parked considerations
 
-- **Coded vs display dimensions.** Currently exposing _display_ size. Trackers may
-  need _coded_ (raw sample-grid) pixels for sub-pixel precision. Revisit at
-  milestone 2.
+_None right now._
 
 ## Milestones
 
@@ -90,9 +94,11 @@ infrastructure later steps need.
 
 ### 2 — Manual tracker
 
-- [ ] Add a tracker (a point/marker) on a frame; store its position.
-- [ ] Move it across frames; data model for tracks over time.
-- [ ] (Decide coded-vs-display coords here.)
+- [x] Add a tracker (a point/marker) on a frame; store its position.
+- [x] Move it across frames; data model for tracks over time (keys per frame,
+      held between keys; drag or Alt+arrow nudge to key a frame).
+- [x] Decide coded-vs-display coords: display (see "Key design decisions").
+- [ ] Persist tracks (save/load with the clip) — not started.
 
 ### 3 — Onion-skinning
 

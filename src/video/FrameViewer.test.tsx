@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+   act,
+   fireEvent,
+   render,
+   screen,
+   waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FakeFrameSource } from "../test/fake-frame-source";
 import { FakeRenderer, fakeCreateRenderer } from "../test/fake-renderer";
@@ -169,5 +175,82 @@ describe("FrameViewer", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(
          "decoder exploded",
       );
+   });
+
+   describe("trackers", () => {
+      function setup() {
+         const user = userEvent.setup();
+         render(
+            <FrameViewer
+               source={new FakeFrameSource({ width: 200, height: 100 })}
+               createRenderer={fakeCreateRenderer().create}
+            />,
+         );
+         const svg = screen.getByTestId("track-overlay");
+         vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+            left: 0,
+            top: 0,
+            width: 200,
+            height: 100,
+         } as DOMRect);
+         fireEvent.pointerDown(svg.querySelector("rect")!, {
+            button: 0,
+            clientX: 50,
+            clientY: 40,
+         });
+         const tracks = () => screen.getByRole("list", { name: "Tracks" });
+         return { user, tracks };
+      }
+
+      it("adds a track on click and lists its position", () => {
+         const { tracks } = setup();
+         expect(tracks()).toHaveTextContent("Track 1");
+         expect(tracks()).toHaveTextContent("50.00, 40.00");
+      });
+
+      it("nudges the selected track with Alt+arrows on the current frame", async () => {
+         const { user, tracks } = setup();
+         await user.keyboard("{ArrowRight}"); // frame 2: position is held
+         expect(screen.getByText("Frame 2 / 100")).toBeInTheDocument();
+         expect(tracks()).toHaveTextContent("50.00, 40.00 (held)");
+
+         await user.keyboard("{Alt>}{ArrowRight}{ArrowDown}{/Alt}");
+         expect(tracks()).toHaveTextContent("51.00, 41.00");
+         expect(tracks()).toHaveTextContent("2 keys");
+         await user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+         expect(tracks()).toHaveTextContent("50.90, 41.00");
+         // Nudging didn't move the playhead.
+         expect(screen.getByText("Frame 2 / 100")).toBeInTheDocument();
+
+         // Frame 1 keeps its own key.
+         await user.keyboard("{ArrowLeft}");
+         expect(tracks()).toHaveTextContent("50.00, 40.00");
+      });
+
+      it("deselects with Escape, after which Alt+arrows step frames again", async () => {
+         const { user } = setup();
+         await user.keyboard("{Escape}");
+         expect(screen.queryByRole("button", { pressed: true })).toBeNull();
+         await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+         expect(screen.getByText("Frame 2 / 100")).toBeInTheDocument();
+      });
+
+      it("deletes the selected track with Delete", async () => {
+         const { user } = setup();
+         await user.keyboard("{Delete}");
+         expect(screen.queryByRole("list", { name: "Tracks" })).toBeNull();
+         expect(
+            screen.getByText(/click the frame to add a tracker/i),
+         ).toBeInTheDocument();
+      });
+
+      it("unkeys a frame from the track list", async () => {
+         const { user, tracks } = setup();
+         await user.keyboard("{ArrowRight}{Alt>}{ArrowRight}{/Alt}");
+         expect(tracks()).toHaveTextContent("2 keys");
+         await user.click(screen.getByRole("button", { name: "Unkey frame" }));
+         expect(tracks()).toHaveTextContent("1 key");
+         expect(tracks()).toHaveTextContent("50.00, 40.00 (held)");
+      });
    });
 });
