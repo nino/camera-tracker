@@ -1,6 +1,7 @@
 import React from "react";
 import type { TrackState } from "../tracking/tracks";
 import { CameraPath } from "./CameraPath";
+import { worstTracks } from "./reproject";
 import { focalMillimetres, solveRequest } from "./request";
 import type { Solution, SolveCamera, SolveResponse } from "./solve-types";
 
@@ -15,6 +16,10 @@ export interface SolvePanelProps {
    solveCamera: SolveCamera;
    /** Exports a solve (for Blender). Without it, there's no export button. */
    onExport?: (solution: Solution) => void;
+   /** Told the latest solution when a solve succeeds, or null otherwise. */
+   onSolution?: (solution: Solution | null) => void;
+   /** Selects a track (from the list of worst tracks). */
+   onSelectTrack?: (id: number) => void;
 }
 
 type Run =
@@ -45,6 +50,8 @@ export function SolvePanel({
    onSeek,
    solveCamera,
    onExport,
+   onSolution,
+   onSelectTrack,
 }: SolvePanelProps) {
    const [focalMm, setFocalMm] = React.useState(DEFAULT_FOCAL_MM);
    const [refineFocal, setRefineFocal] = React.useState(true);
@@ -72,18 +79,20 @@ export function SolvePanel({
             }
          })
          .then(
-            (response) =>
+            (response) => {
                setRun({
                   status: "done",
                   response,
                   tracks: solvedTracks,
                   trackCount: request.tracks.length,
-               }),
+               });
+               onSolution?.(response.status === "solved" ? response : null);
+            },
             (err: unknown) => {
                if (controller.signal.aborted) {
-                  setRun({ status: "idle" });
-                  return;
+                  return void setRun({ status: "idle" });
                }
+               onSolution?.(null);
                setRun({
                   status: "done",
                   response: {
@@ -153,6 +162,10 @@ export function SolvePanel({
                frame={frame}
                onSeek={onSeek}
                onExport={onExport}
+               onSelectTrack={onSelectTrack}
+               trackNames={
+                  new Map(tracks.tracks.map((t) => [t.id, t.name] as const))
+               }
             />
          )}
       </section>
@@ -168,6 +181,8 @@ function SolveResult({
    frame,
    onSeek,
    onExport,
+   onSelectTrack,
+   trackNames,
 }: {
    run: Extract<Run, { status: "done" }>;
    stale: boolean;
@@ -177,6 +192,8 @@ function SolveResult({
    frame: number;
    onSeek: (frame: number) => void;
    onExport?: (solution: Solution) => void;
+   onSelectTrack?: (id: number) => void;
+   trackNames: ReadonlyMap<number, string>;
 }) {
    const { response } = run;
    if (response.status === "failed") {
@@ -204,11 +221,62 @@ function SolveResult({
             </p>
          )}
          <CameraPath solution={response} frame={frame} onSeek={onSeek} />
+         <WorstTracks
+            solution={response}
+            trackNames={trackNames}
+            onSelectTrack={onSelectTrack}
+         />
          {onExport != null && (
             <button type="button" onClick={() => onExport(response)}>
                Export camera for Blender
             </button>
          )}
       </>
+   );
+}
+
+const WORST_COUNT = 5;
+
+/**
+ * The tracks the solve fits worst: the first place to look when the error is
+ * high. Selecting one selects it in the viewer, to fix or delete.
+ */
+function WorstTracks({
+   solution,
+   trackNames,
+   onSelectTrack,
+}: {
+   solution: Solution;
+   trackNames: ReadonlyMap<number, string>;
+   onSelectTrack?: (id: number) => void;
+}) {
+   const worst = worstTracks(solution, WORST_COUNT);
+   if (worst.length === 0) {
+      return null;
+   }
+   return (
+      <div className="worst-tracks">
+         Worst tracks:
+         <ul aria-label="Worst tracks">
+            {worst.map((point) => {
+               const label = `${trackNames.get(point.id) ?? `Track ${point.id}`} (${point.error.toFixed(2)} px)`;
+               return (
+                  <li key={point.id}>
+                     {onSelectTrack == null ? (
+                        label
+                     ) : (
+                        <button
+                           type="button"
+                           className="link-button"
+                           onClick={() => onSelectTrack(point.id)}
+                        >
+                           {label}
+                        </button>
+                     )}
+                  </li>
+               );
+            })}
+         </ul>
+      </div>
    );
 }
