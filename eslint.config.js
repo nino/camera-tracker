@@ -23,7 +23,7 @@ const vitestGlobals = {
 };
 
 export default tseslint.config(
-   { ignores: ["dist", "coverage", "src-tauri"] },
+   { ignores: ["dist", "coverage", "src-tauri", "solver"] },
 
    // Recommended baselines: core JS, TypeScript, React, and the React Hooks rules.
    { settings: { react: { version: "detect" } } },
