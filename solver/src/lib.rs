@@ -10,11 +10,14 @@
 //!   +z, with +x right and +y down in the image. A pose maps world points
 //!   into camera coordinates: `p_cam = R * p_world + t`.
 
+pub mod api;
 pub mod bundle;
 pub mod camera;
 pub mod geometry;
 pub mod rng;
 pub mod solve;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 #[cfg(test)]
 mod synthetic;

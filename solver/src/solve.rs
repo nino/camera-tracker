@@ -113,6 +113,8 @@ struct State<'a> {
     /// Frames tried and rejected for resection.
     failed: Vec<bool>,
     fixed_frame: usize,
+    /// Solved frames in the order they were added.
+    order: Vec<usize>,
     rng: Rng,
 }
 
@@ -127,32 +129,35 @@ pub fn solve(input: &SolveInput, options: &SolveOptions) -> Result<Solution, Sol
         active: input.tracks.iter().map(|t| vec![true; t.len()]).collect(),
         failed: vec![false; input.frame_count],
         fixed_frame: 0,
+        order: Vec::new(),
         rng: Rng::new(options.seed),
     };
     let keyframes = state.initialise()?;
     state.fixed_frame = keyframes.0;
 
-    let mut last_adjusted = 2;
+    let mut last_global = 2;
     while let Some(frame) = state.next_frame() {
         if !state.register(frame) {
             state.failed[frame] = true;
             continue;
         }
         state.triangulate_new();
-        let solved = state.poses.iter().flatten().count();
-        // Adjust whenever the solve has grown by a fifth, to keep drift down
-        // without a full adjustment per frame.
-        if solved >= last_adjusted + (last_adjusted / 5).max(3) {
-            state.adjust(false);
-            last_adjusted = solved;
+        // Refine the newest cameras after every addition (cheap), and the
+        // whole solve each time it has grown by half, to keep drift down.
+        let solved = state.order.len();
+        if solved >= last_global + last_global / 2 {
+            state.adjust(false, false);
+            last_global = solved;
+        } else {
+            state.adjust(false, true);
         }
     }
-    state.adjust(input.refine_focal);
+    state.adjust(input.refine_focal, false);
     for _ in 0..3 {
         if state.reject_outliers() == 0 {
             break;
         }
-        state.adjust(input.refine_focal);
+        state.adjust(input.refine_focal, false);
     }
     Ok(state.finish(keyframes))
 }
@@ -220,7 +225,10 @@ impl State<'_> {
             .collect();
         let threshold = (self.options.outlier_px / k.focal).powi(2);
         let mut best: Option<Vec<usize>> = None;
-        for _ in 0..self.options.ransac_iterations {
+        let mut needed = self.options.ransac_iterations;
+        let mut tried = 0;
+        while tried < needed {
+            tried += 1;
             let sample: Vec<_> = self
                 .rng
                 .sample(norm.len(), 8)
@@ -234,6 +242,7 @@ impl State<'_> {
                 .filter(|&i| sampson_error(&e, &norm[i].0, &norm[i].1) < threshold)
                 .collect();
             if best.as_ref().is_none_or(|b| inliers.len() > b.len()) {
+                needed = needed.min(ransac_iterations_for(inliers.len(), norm.len(), 8));
                 best = Some(inliers);
             }
         }
@@ -277,8 +286,9 @@ impl State<'_> {
         }
         self.poses[a] = Some(pose_a);
         self.poses[b] = Some(pose_b);
+        self.order = vec![a, b];
         self.fixed_frame = a;
-        self.adjust(false);
+        self.adjust(false, false);
         true
     }
 
@@ -318,7 +328,10 @@ impl State<'_> {
         // re-scored at the real threshold (locally optimised RANSAC).
         let loose = 4.0 * self.options.outlier_px;
         let mut best: Option<(Pose, usize)> = None;
-        for _ in 0..self.options.ransac_iterations {
+        let mut needed = self.options.ransac_iterations;
+        let mut tried = 0;
+        while tried < needed {
+            tried += 1;
             let sample: Vec<_> = self
                 .rng
                 .sample(normalised.len(), 6)
@@ -330,6 +343,7 @@ impl State<'_> {
             };
             let count = known.iter().filter(|o| within(&pose, o, loose)).count();
             if best.as_ref().is_none_or(|(_, n)| count > *n) {
+                needed = needed.min(ransac_iterations_for(count, known.len(), 6));
                 best = Some((pose, count));
             }
         }
@@ -359,6 +373,7 @@ impl State<'_> {
         }
         let pose = refine_pose(&k, pose, &inliers, 10);
         self.poses[frame] = Some(pose);
+        self.order.push(frame);
         true
     }
 
@@ -436,13 +451,37 @@ impl State<'_> {
         }
     }
 
-    /// Bundle-adjusts all solved frames and points.
-    fn adjust(&mut self, refine_focal: bool) {
-        let frames: Vec<usize> = (0..self.input.frame_count)
-            .filter(|&f| self.poses[f].is_some())
-            .collect();
+    /// Bundle-adjusts the solve. `local` refines only the most recently
+    /// added cameras and the points they see, holding every other camera
+    /// that sees those points fixed; otherwise everything is refined.
+    fn adjust(&mut self, refine_focal: bool, local: bool) {
+        const LOCAL_WINDOW: usize = 10;
+        let mut free = vec![!local; self.input.frame_count];
+        if local {
+            for &f in self.order.iter().rev().take(LOCAL_WINDOW) {
+                free[f] = true;
+            }
+        }
+        free[self.fixed_frame] = false;
+        let seen_by_free = |t: usize| {
+            self.input.tracks[t]
+                .iter()
+                .enumerate()
+                .any(|(o, (f, _))| self.active[t][o] && free[*f] && self.poses[*f].is_some())
+        };
         let tracks: Vec<usize> = (0..self.input.tracks.len())
-            .filter(|&t| self.points[t].is_some())
+            .filter(|&t| self.points[t].is_some() && (!local || seen_by_free(t)))
+            .collect();
+        let mut used = vec![false; self.input.frame_count];
+        for &t in &tracks {
+            for (o, (f, _)) in self.input.tracks[t].iter().enumerate() {
+                if self.active[t][o] && self.poses[*f].is_some() {
+                    used[*f] = true;
+                }
+            }
+        }
+        let frames: Vec<usize> = (0..self.input.frame_count)
+            .filter(|&f| self.poses[f].is_some() && (used[f] || f == self.fixed_frame))
             .collect();
         let mut frame_index = vec![usize::MAX; self.input.frame_count];
         for (i, &f) in frames.iter().enumerate() {
@@ -473,7 +512,12 @@ impl State<'_> {
             observations,
         };
         let options = BundleOptions {
-            fixed_cameras: vec![frame_index[self.fixed_frame]],
+            fixed_cameras: frames
+                .iter()
+                .enumerate()
+                .filter(|(_, &f)| !free[f])
+                .map(|(i, _)| i)
+                .collect(),
             refine_focal,
             ..BundleOptions::default()
         };
@@ -555,6 +599,23 @@ impl State<'_> {
             keyframes,
         }
     }
+}
+
+/// RANSAC iterations needed to draw at least one all-inlier sample of `k`
+/// with 99.9% probability, given the best inlier count so far (adaptive
+/// termination: few iterations when nearly everything is an inlier).
+fn ransac_iterations_for(inliers: usize, total: usize, k: usize) -> usize {
+    let w = inliers as f64 / total.max(1) as f64;
+    let all_inliers = w.powi(k as i32);
+    if all_inliers >= 1.0 {
+        return 1;
+    }
+    if all_inliers <= 0.0 {
+        return usize::MAX;
+    }
+    ((1.0 - 0.999f64).ln() / (1.0 - all_inliers).ln())
+        .ceil()
+        .max(1.0) as usize
 }
 
 /// Tracks seen on both frames: (track, position on a, position on b).

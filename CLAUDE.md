@@ -141,6 +141,8 @@ solver/                Rust camera solver crate (pure; no Tauri or I/O). cargo t
   src/bundle.rs          bundle adjustment (Levenberg–Marquardt, Schur complement)
   src/geometry.rs        essential matrix, relative pose, triangulation, resection
   src/solve.rs           tracks -> cameras + points (incremental SfM, outlier rejection)
+  src/api.rs             JSON request/response (solve_json); what the app calls
+  src/wasm.rs            WebAssembly C-ABI exports (alloc, dealloc, solve)
   src/rng.rs             deterministic RNG for RANSAC and tests
   src/synthetic.rs       test scenes with known cameras and points
 src-tauri/             Rust/Tauri shell

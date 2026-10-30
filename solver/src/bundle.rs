@@ -213,6 +213,69 @@ fn linearise(problem: &Problem, layout: &Layout) -> Linearised {
     lin
 }
 
+/// Subtracts the Schur block for the observation pair (a, b) and its mirror
+/// (b, a) from the lower triangle of `s`. `block` is Wa·V⁻¹·Wbᵀ. Camera
+/// columns are 6 contiguous slots per camera; the focal slot (if any) comes
+/// after every camera, so its row is always in the lower triangle.
+fn subtract_lower(
+    s: &mut DMatrix<f64>,
+    ca: &Columns,
+    cb: &Columns,
+    block: &SMatrix<f64, CAM, CAM>,
+    same: bool,
+) {
+    let (oa, ob) = (ca[0], cb[0]);
+    if let (Some(oa), Some(ob)) = (oa, ob) {
+        if same || oa == ob {
+            // Diagonal block of one camera. For a pair (a ≠ b) on the same
+            // camera, the mirror block is the transpose; add both.
+            for j in 0..6 {
+                for i in 0..6 {
+                    let v = if same {
+                        block[(i, j)]
+                    } else {
+                        block[(i, j)] + block[(j, i)]
+                    };
+                    s[(oa + i, oa + j)] -= v;
+                }
+            }
+        } else if oa > ob {
+            for j in 0..6 {
+                for i in 0..6 {
+                    s[(oa + i, ob + j)] -= block[(i, j)];
+                }
+            }
+        } else {
+            for j in 0..6 {
+                for i in 0..6 {
+                    s[(ob + i, oa + j)] -= block[(j, i)];
+                }
+            }
+        }
+    }
+    if let Some(f) = ca[6] {
+        // Row f, camera columns: (a, b) contributes block[6, ·] at b's
+        // camera, and the mirror (b, a) contributes block[·, 6] at a's.
+        if let Some(ob) = ob {
+            for j in 0..6 {
+                s[(f, ob + j)] -= block[(6, j)];
+            }
+        }
+        if !same {
+            if let Some(oa) = oa {
+                for j in 0..6 {
+                    s[(f, oa + j)] -= block[(j, 6)];
+                }
+            }
+        }
+        s[(f, f)] -= if same {
+            block[(6, 6)]
+        } else {
+            2.0 * block[(6, 6)]
+        };
+    }
+}
+
 /// The damped step (camera deltas, point deltas), or `None` if the damped
 /// system isn't positive definite.
 fn solve_step(
@@ -231,30 +294,35 @@ fn solve_step(
     }
     let mut rhs = lin.gc.clone();
     let mut v_inv = Vec::with_capacity(lin.v.len());
+    let mut weighted: Vec<CameraPointBlock> = Vec::new();
+    let mut free_obs: Vec<usize> = Vec::new();
     for (i, observations) in by_point.iter().enumerate() {
         let mut v = lin.v[i];
         damp(&mut v);
         let inv = v.try_inverse()?;
-        for &oa in observations {
-            let wa = lin.w[oa] * inv;
-            let ca = &lin.columns[oa];
-            let r = wa * lin.gp[i];
-            for a in 0..CAM {
-                if let Some(ia) = ca[a] {
-                    rhs[ia] -= r[a];
+        // Observations on fixed cameras (with no focal) add nothing to the
+        // camera system; skipping them matters for local adjustments.
+        free_obs.clear();
+        free_obs.extend(
+            observations
+                .iter()
+                .copied()
+                .filter(|&o| lin.columns[o].iter().any(Option::is_some)),
+        );
+        weighted.clear();
+        weighted.extend(free_obs.iter().map(|&o| lin.w[o] * inv));
+        for (a, &oa) in free_obs.iter().enumerate() {
+            let r = weighted[a] * lin.gp[i];
+            for (k, col) in lin.columns[oa].iter().enumerate() {
+                if let Some(ia) = col {
+                    rhs[*ia] -= r[k];
                 }
             }
-            for &ob in observations {
-                let block = wa * lin.w[ob].transpose();
-                let cb = &lin.columns[ob];
-                for a in 0..CAM {
-                    let Some(ia) = ca[a] else { continue };
-                    for b in 0..CAM {
-                        if let Some(ib) = cb[b] {
-                            s[(ia, ib)] -= block[(a, b)];
-                        }
-                    }
-                }
+            // Each unordered pair once: S is symmetric and Cholesky only
+            // reads its lower triangle.
+            for (b, &ob) in free_obs.iter().enumerate().take(a + 1) {
+                let block = weighted[a] * lin.w[ob].transpose();
+                subtract_lower(&mut s, &lin.columns[oa], &lin.columns[ob], &block, a == b);
             }
         }
         v_inv.push(inv);
