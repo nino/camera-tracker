@@ -12,6 +12,9 @@
 
 pub mod bundle;
 pub mod camera;
+pub mod geometry;
+pub mod rng;
+pub mod solve;
 
 #[cfg(test)]
 mod synthetic;

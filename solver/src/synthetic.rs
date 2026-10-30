@@ -4,38 +4,7 @@ use nalgebra::{Rotation3, Vector2, Vector3};
 
 use crate::bundle::{Observation, Problem};
 use crate::camera::{project, Intrinsics, Pose};
-
-/// Small deterministic RNG (xorshift64*), so tests need no extra crates.
-pub struct Rng(u64);
-
-impl Rng {
-    pub fn new(seed: u64) -> Self {
-        Self(seed.max(1))
-    }
-
-    pub fn uniform(&mut self) -> f64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        let bits = self.0.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11;
-        bits as f64 / (1u64 << 53) as f64
-    }
-
-    pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
-        lo + (hi - lo) * self.uniform()
-    }
-
-    /// Standard normal (Box–Muller).
-    pub fn normal(&mut self) -> f64 {
-        let u = self.uniform().max(1e-300);
-        let v = self.uniform();
-        (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos()
-    }
-
-    pub fn normal3(&mut self, sigma: f64) -> Vector3<f64> {
-        Vector3::new(self.normal(), self.normal(), self.normal()) * sigma
-    }
-}
+pub use crate::rng::Rng;
 
 pub const WIDTH: f64 = 640.0;
 pub const HEIGHT: f64 = 360.0;
