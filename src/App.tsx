@@ -1,80 +1,108 @@
 import React from "react";
 import "./App.css";
+import type { FrameSource } from "./video/frame-source";
+import { FrameViewer } from "./video/FrameViewer";
 
-// Throwaway diagnostic: confirm whether Tauri's WKWebView exposes WebGPU.
-// Once we know the answer, this whole component gets deleted.
-type ProbeState =
-   | { status: "checking" }
-   | { status: "unavailable"; reason: string }
-   | { status: "ok"; adapter: string; features: string[] };
+export interface AppProps {
+   /**
+    * Opens a dropped file as a FrameSource. Injected so tests can pass a fake;
+    * `main.tsx` passes `MediabunnyFrameSource.open`.
+    */
+   openSource: (file: File) => Promise<FrameSource>;
+}
 
-function App() {
-   const [probe, setProbe] = React.useState<ProbeState>({ status: "checking" });
+type LoadState =
+   | { status: "empty" }
+   | { status: "loading"; name: string }
+   | { status: "ready"; id: number; name: string; source: FrameSource }
+   | { status: "error"; message: string };
 
-   React.useEffect(() => {
-      async function probeWebGpu() {
-         const gpu = navigator.gpu;
-         if (gpu == null) {
-            const reason =
-               "navigator.gpu is undefined — WebGPU is not exposed in this webview.";
-            console.log("[WEBGPU-PROBE] UNAVAILABLE:", reason);
-            setProbe({ status: "unavailable", reason });
+function App({ openSource }: AppProps) {
+   const [state, setState] = React.useState<LoadState>({ status: "empty" });
+   const [dragging, setDragging] = React.useState(false);
+   // Bumped on every open so a slow earlier open can't replace a newer one.
+   const openId = React.useRef(0);
+
+   // Dispose the current source when it's replaced or the app unmounts.
+   const source = state.status === "ready" ? state.source : null;
+   React.useEffect(() => () => source?.dispose(), [source]);
+
+   async function open(file: File) {
+      const id = ++openId.current;
+      setState({ status: "loading", name: file.name });
+      try {
+         const opened = await openSource(file);
+         if (id !== openId.current) {
+            opened.dispose();
             return;
          }
-         try {
-            const adapter = await gpu.requestAdapter();
-            if (adapter == null) {
-               const reason =
-                  "requestAdapter() returned null — no compatible GPU adapter.";
-               console.log("[WEBGPU-PROBE] UNAVAILABLE:", reason);
-               setProbe({ status: "unavailable", reason });
-               return;
-            }
-            const device = await adapter.requestDevice();
-            const features = Array.from(device.features.values());
-            const info = adapter.info ?? null;
-            const adapterName =
-               info?.description ??
-               info?.vendor ??
-               info?.architecture ??
-               "unknown adapter";
-            console.log(
-               "[WEBGPU-PROBE] OK:",
-               adapterName,
-               "| features:",
-               features.join(", ") || "(none)",
-            );
-            setProbe({ status: "ok", adapter: adapterName, features });
-         } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err);
-            console.log("[WEBGPU-PROBE] ERROR:", reason);
-            setProbe({ status: "unavailable", reason });
+         setState({ status: "ready", id, name: file.name, source: opened });
+      } catch (err) {
+         if (id === openId.current) {
+            const message = err instanceof Error ? err.message : String(err);
+            setState({ status: "error", message });
          }
       }
-      probeWebGpu();
-   }, []);
+   }
+
+   function onDrop(event: React.DragEvent) {
+      event.preventDefault();
+      setDragging(false);
+      const file = event.dataTransfer.files[0];
+      if (file != null) {
+         void open(file);
+      }
+   }
+
+   function onPick(event: React.ChangeEvent<HTMLInputElement>) {
+      const file = event.target.files?.[0];
+      if (file != null) {
+         void open(file);
+      }
+      event.target.value = "";
+   }
 
    return (
-      <main className="container">
-         <h1>WebGPU probe</h1>
-         {probe.status === "checking" && <p>Checking for WebGPU…</p>}
-         {probe.status === "unavailable" && (
-            <>
-               <p style={{ color: "#e5484d" }}>❌ WebGPU unavailable</p>
-               <p>{probe.reason}</p>
-            </>
+      <main
+         className={dragging ? "app dragging" : "app"}
+         data-testid="drop-zone"
+         onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+         }}
+         onDragLeave={() => setDragging(false)}
+         onDrop={onDrop}
+      >
+         <header className="toolbar">
+            <label className="open-button">
+               Open video…
+               <input
+                  type="file"
+                  accept="video/*"
+                  onChange={onPick}
+                  aria-label="Open video"
+                  hidden
+               />
+            </label>
+            {(state.status === "ready" || state.status === "loading") && (
+               <span className="file-name">{state.name}</span>
+            )}
+         </header>
+
+         {state.status === "empty" && (
+            <p className="hint">
+               Drop a video file here, or click “Open video…”.
+            </p>
          )}
-         {probe.status === "ok" && (
-            <>
-               <p style={{ color: "#30a46c" }}>✅ WebGPU is working</p>
-               <p>Adapter: {probe.adapter}</p>
-               <p>
-                  Features:{" "}
-                  {probe.features.length > 0
-                     ? probe.features.join(", ")
-                     : "(none)"}
-               </p>
-            </>
+         {state.status === "loading" && <p className="hint">Opening…</p>}
+         {state.status === "error" && (
+            <p className="error" role="alert">
+               Couldn’t open that file: {state.message}
+            </p>
+         )}
+         {state.status === "ready" && (
+            // Keyed so the playhead resets to frame 0 for each new file.
+            <FrameViewer key={state.id} source={state.source} />
          )}
       </main>
    );

@@ -71,7 +71,7 @@ infrastructure later steps need.
 
 - [x] `FrameSource` spine interface + ownership/seek design.
 - [x] `MediabunnyFrameSource.open()` — demux, timestamp table, metadata, naive cache.
-- [ ] **1a harness:** drop-zone → open → draw current frame to a 2D canvas;
+- [x] **1a harness:** drop-zone → open → draw current frame to a 2D canvas;
       `←`/`→` to step; frame counter. Replaces the WebGPU probe.
 - [ ] **Cache:** windowed LRU eviction (close evicted samples; keep a warm window
       around the playhead).
