@@ -113,8 +113,10 @@ infrastructure later steps need.
       cross-correlation on the CPU with sub-pixel refinement, T / Shift+T to
       track forward / backward, Escape to stop. This is the reference
       implementation the GPU version is tested against.
-- [ ] Move the correlation (the score map) to a WebGPU compute shader.
-- [ ] Compute-shader track begins here (Surma's "All the cores, none of the canvas").
+- [x] Move the correlation (the score map) to a WebGPU compute shader, with
+      the CPU version as the oracle and fallback.
+- [x] Compute-shader track begins here (Surma's "All the cores, none of the
+      canvas"): `src/gpu/score-map.ts` is the first compute shader.
 
 ### 5 — Export to Blender
 

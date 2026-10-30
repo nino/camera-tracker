@@ -3,10 +3,12 @@ import type { FrameSource } from "../video/frame-source";
 import {
    defaultMatchOptions,
    extractPatch,
-   matchPattern,
+   matchFromScores,
    normalise,
+   scoreMap,
    type LumaImage,
    type MatchOptions,
+   type ScoreMapFn,
 } from "./match";
 import type { Point } from "./tracks";
 
@@ -51,6 +53,8 @@ export interface AutoTrackParams {
    onStep: (frame: number, point: Point, score: number) => void;
    signal?: AbortSignal;
    options?: AutoTrackOptions;
+   /** Computes the score map; defaults to the CPU reference. */
+   scorer?: ScoreMapFn;
 }
 
 /**
@@ -71,6 +75,7 @@ export async function autoTrack({
    onStep,
    signal,
    options = defaultAutoTrackOptions,
+   scorer = scoreMap,
 }: AutoTrackParams): Promise<AutoTrackResult> {
    const pattern = normalise(
       extractPatch(
@@ -100,7 +105,18 @@ export async function autoTrack({
       if (signal?.aborted) {
          return { stopped: "cancelled", frames };
       }
-      const match = matchPattern(pattern, image, previous, options);
+      const scores = await scorer(
+         pattern,
+         options.patternSize,
+         image,
+         previous.x,
+         previous.y,
+         options.searchRadius,
+      );
+      if (signal?.aborted) {
+         return { stopped: "cancelled", frames };
+      }
+      const match = matchFromScores(pattern, image, previous, options, scores);
       if (match.atEdge) {
          return { stopped: "edge", frames, score: match.score };
       }

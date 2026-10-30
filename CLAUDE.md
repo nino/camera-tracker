@@ -116,6 +116,7 @@ src/
   gpu/
     frame-renderer.ts      FrameRenderer interface; picks WebGPU or canvas 2D
     webgpu-frame-renderer.ts  WGSL shader, createFrameDrawer (any target), canvas renderer
+    score-map.ts           WebGPU compute score map for tracking; createScorer falls back to CPU
   test/
     setup.ts               Vitest setup (jest-dom matchers, quiet canvas stub)
     fake-frame-source.ts   FakeFrameSource for component tests

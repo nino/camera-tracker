@@ -1,6 +1,8 @@
 import type { AutoTrackResult } from "./autotrack";
 
 export interface TrackingStatus {
+   /** Where the score map runs; known once the first frame is matched. */
+   engine?: "webgpu" | "cpu";
    name: string;
    direction: 1 | -1;
    frames: number;
