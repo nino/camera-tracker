@@ -19,6 +19,17 @@
 
 use nalgebra::{Vector2, Vector3};
 
+/// Progress notes for debugging solves: printed by test builds (see the
+/// ignored `api::dump::run_file`), compiled out otherwise.
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        #[cfg(test)]
+        eprintln!($($arg)*);
+        #[cfg(not(test))]
+        let _ = format_args!($($arg)*);
+    };
+}
+
 use crate::bundle::{bundle_adjust, Observation, Options as BundleOptions, Problem};
 use crate::camera::{project, Intrinsics, Pose, MIN_DEPTH};
 use crate::geometry::{
@@ -38,9 +49,14 @@ pub struct SolveInput {
     pub tracks: Vec<Track>,
     /// Focal length guess in pixels.
     pub focal: f64,
-    /// Refine the focal length in the final bundle adjustment. Only reliable
-    /// with plenty of perspective (see bundle.rs tests).
+    /// Refine the focal length. Only reliable with plenty of perspective
+    /// (see bundle.rs tests).
     pub refine_focal: bool,
+    /// Radial distortion guess (see camera.rs); 0 for none.
+    pub k1: f64,
+    pub k2: f64,
+    /// Refine k1 and k2.
+    pub refine_distortion: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +65,9 @@ pub struct SolveOptions {
     pub outlier_px: f64,
     /// Minimum angle between viewing rays to triangulate a point (radians).
     pub min_parallax: f64,
+    /// Minimum median parallax of the starting pair (radians). Lower than
+    /// `min_parallax`: handheld shots rarely have more between two frames.
+    pub min_start_parallax: f64,
     pub ransac_iterations: usize,
     pub seed: u64,
 }
@@ -57,7 +76,8 @@ impl Default for SolveOptions {
     fn default() -> Self {
         Self {
             outlier_px: 2.0,
-            min_parallax: 1f64.to_radians(),
+            min_parallax: 0.25f64.to_radians(),
+            min_start_parallax: 0.2f64.to_radians(),
             ransac_iterations: 500,
             seed: 1,
         }
@@ -111,15 +131,38 @@ struct State<'a> {
     /// Per track, per observation index: still used (not an outlier).
     active: Vec<Vec<bool>>,
     /// Frames tried and rejected for resection.
-    failed: Vec<bool>,
+    /// For frames that failed to register: how many solved points they saw
+    /// then. They're retried once they see more.
+    failed: Vec<Option<usize>>,
     fixed_frame: usize,
     /// Solved frames in the order they were added.
     order: Vec<usize>,
     rng: Rng,
+    k1_only: bool,
 }
 
+/// Frame pairs tried as the starting pair.
+const START_CANDIDATES: usize = 20;
+
+/// A candidate two-view start (see `State::try_pair`).
+struct Start {
+    a: usize,
+    b: usize,
+    pose_b: Pose,
+    points: Vec<(usize, Vector3<f64>)>,
+    /// Median angle between the two views' rays to the points (radians).
+    parallax: f64,
+}
+
+/// Solved cameras needed before the intrinsics are refined mid-solve.
+const MIN_CAMERAS_FOR_INTRINSICS: usize = 12;
+
 pub fn solve(input: &SolveInput, options: &SolveOptions) -> Result<Solution, SolveError> {
-    let k = Intrinsics::centred(input.focal, input.width, input.height);
+    let k = Intrinsics {
+        k1: input.k1,
+        k2: input.k2,
+        ..Intrinsics::centred(input.focal, input.width, input.height)
+    };
     let mut state = State {
         input,
         options,
@@ -127,10 +170,11 @@ pub fn solve(input: &SolveInput, options: &SolveOptions) -> Result<Solution, Sol
         poses: vec![None; input.frame_count],
         points: vec![None; input.tracks.len()],
         active: input.tracks.iter().map(|t| vec![true; t.len()]).collect(),
-        failed: vec![false; input.frame_count],
+        failed: vec![None; input.frame_count],
         fixed_frame: 0,
         order: Vec::new(),
         rng: Rng::new(options.seed),
+        k1_only: false,
     };
     let keyframes = state.initialise()?;
     state.fixed_frame = keyframes.0;
@@ -138,26 +182,36 @@ pub fn solve(input: &SolveInput, options: &SolveOptions) -> Result<Solution, Sol
     let mut last_global = 2;
     while let Some(frame) = state.next_frame() {
         if !state.register(frame) {
-            state.failed[frame] = true;
+            state.failed[frame] = Some(state.seen_points(frame));
             continue;
         }
         state.triangulate_new();
         // Refine the newest cameras after every addition (cheap), and the
-        // whole solve each time it has grown by half, to keep drift down.
+        // whole solve (with the intrinsics, if asked) each time it has grown
+        // by half, to keep drift down.
+        // Intrinsics wait for enough cameras: with a handful, focal length
+        // and distortion trade off against depth and can run away.
         let solved = state.order.len();
         if solved >= last_global + last_global / 2 {
-            state.adjust(false, false);
+            state.k1_only = true;
+            state.adjust(solved >= MIN_CAMERAS_FOR_INTRINSICS, false);
+            state.k1_only = false;
             last_global = solved;
         } else {
             state.adjust(false, true);
         }
     }
-    state.adjust(input.refine_focal, false);
+    trace!(
+        "incremental done: {} frames, {:?}",
+        state.order.len(),
+        state.k
+    );
+    state.adjust(true, false);
     for _ in 0..3 {
         if state.reject_outliers() == 0 {
             break;
         }
-        state.adjust(input.refine_focal, false);
+        state.adjust(true, false);
     }
     Ok(state.finish(keyframes))
 }
@@ -204,20 +258,41 @@ impl State<'_> {
             return Err(SolveError::NotEnoughTracks);
         }
         pairs.sort_by(|x, y| y.0.total_cmp(&x.0));
-        for (_, a, b, shared) in pairs.into_iter().take(10) {
-            if self.try_pair(a, b, &shared) {
-                return Ok((a, b));
+        // Real handheld shots often have well under a degree of parallax
+        // between any two frames, so rather than taking the first pair
+        // that clears a bar, try the most promising pairs and keep the one
+        // with the most parallax.
+        let mut best: Option<Start> = None;
+        for (_, a, b, shared) in pairs.into_iter().take(START_CANDIDATES) {
+            if let Some(start) = self.try_pair(a, b, &shared) {
+                if best.as_ref().is_none_or(|s| start.parallax > s.parallax) {
+                    best = Some(start);
+                }
             }
         }
-        Err(SolveError::NoInitialPair)
+        let start = best
+            .filter(|s| s.parallax >= self.options.min_start_parallax)
+            .ok_or(SolveError::NoInitialPair)?;
+        let (a, b) = (start.a, start.b);
+        for (track, x) in start.points {
+            self.points[track] = Some(x);
+        }
+        self.poses[a] = Some(Pose::identity());
+        self.poses[b] = Some(start.pose_b);
+        self.order = vec![a, b];
+        self.fixed_frame = a;
+        self.adjust(false, false);
+        Ok((a, b))
     }
 
+    /// A two-view start for frames `a` and `b` (camera `a` at the origin),
+    /// or `None` if their tracks don't fit one relative motion.
     fn try_pair(
         &mut self,
         a: usize,
         b: usize,
         shared: &[(usize, Vector2<f64>, Vector2<f64>)],
-    ) -> bool {
+    ) -> Option<Start> {
         let k = self.k;
         let norm: Vec<_> = shared
             .iter()
@@ -246,20 +321,16 @@ impl State<'_> {
                 best = Some(inliers);
             }
         }
-        let Some(inliers) = best else { return false };
+        let inliers = best?;
         if inliers.len() < 8 || inliers.len() * 2 < norm.len() {
-            return false;
+            return None;
         }
         let inlier_pairs: Vec<_> = inliers.iter().map(|&i| norm[i]).collect();
-        let Some(e) = essential_eight_point(&inlier_pairs) else {
-            return false;
-        };
-        let Some((pose_b, _)) = relative_pose(&e, &inlier_pairs) else {
-            return false;
-        };
+        let e = essential_eight_point(&inlier_pairs)?;
+        let (pose_b, _) = relative_pose(&e, &inlier_pairs)?;
         let pose_a = Pose::identity();
 
-        let mut angles = Vec::new();
+        let mut triangulated = Vec::new();
         for &i in &inliers {
             let (track, _, _) = shared[i];
             let (na, nb) = norm[i];
@@ -269,42 +340,47 @@ impl State<'_> {
             if pose_a.to_camera(&x).z <= MIN_DEPTH || pose_b.to_camera(&x).z <= MIN_DEPTH {
                 continue;
             }
-            let angle = parallax(&pose_a, &pose_b, &x);
-            angles.push(angle);
-            if angle >= self.options.min_parallax {
-                self.points[track] = Some(x);
-            }
+            triangulated.push((track, x, parallax(&pose_a, &pose_b, &x)));
         }
+        if triangulated.len() < 8 {
+            return None;
+        }
+        let mut angles: Vec<f64> = triangulated.iter().map(|t| t.2).collect();
         angles.sort_by(f64::total_cmp);
-        let triangulated = self.points.iter().flatten().count();
-        if angles.is_empty()
-            || angles[angles.len() / 2] < self.options.min_parallax
-            || triangulated < 8
-        {
-            self.points.iter_mut().for_each(|p| *p = None);
-            return false;
-        }
-        self.poses[a] = Some(pose_a);
-        self.poses[b] = Some(pose_b);
-        self.order = vec![a, b];
-        self.fixed_frame = a;
-        self.adjust(false, false);
-        true
+        let median = angles[angles.len() / 2];
+        // Keep the points that are at least half as well triangulated as the
+        // typical one; bundle adjustment and later views firm them up.
+        let points: Vec<_> = triangulated
+            .into_iter()
+            .filter(|t| t.2 >= 0.5 * median)
+            .map(|(track, x, _)| (track, x))
+            .collect();
+        (points.len() >= 8).then_some(Start {
+            a,
+            b,
+            pose_b,
+            points,
+            parallax: median,
+        })
     }
 
-    /// The unsolved frame that sees the most solved points (at least 6).
+    /// Solved points that `frame` has active observations of.
+    fn seen_points(&self, frame: usize) -> usize {
+        self.observations_on(frame)
+            .iter()
+            .filter(|(t, _)| self.points[*t].is_some())
+            .count()
+    }
+
+    /// The unsolved frame that sees the most solved points (at least 6). A
+    /// frame that failed is tried again once it sees a quarter more.
     fn next_frame(&self) -> Option<usize> {
         (0..self.input.frame_count)
-            .filter(|&f| self.poses[f].is_none() && !self.failed[f])
-            .map(|f| {
-                let seen = self
-                    .observations_on(f)
-                    .iter()
-                    .filter(|(t, _)| self.points[*t].is_some())
-                    .count();
-                (seen, f)
+            .filter(|&f| self.poses[f].is_none())
+            .map(|f| (self.seen_points(f), f))
+            .filter(|&(seen, f)| {
+                seen >= 6 && self.failed[f].is_none_or(|before| seen > before + before / 4)
             })
-            .filter(|(seen, _)| *seen >= 6)
             .max()
             .map(|(_, f)| f)
     }
@@ -358,6 +434,11 @@ impl State<'_> {
                 .copied()
                 .collect();
             if inliers.len() < 6 {
+                trace!(
+                    "frame {frame}: {} of {} points fit",
+                    inliers.len(),
+                    known.len()
+                );
                 return false;
             }
             pose = refine_pose(&k, pose, &inliers, 10);
@@ -369,6 +450,11 @@ impl State<'_> {
             .copied()
             .collect();
         if inliers.len() < 6 || inliers.len() * 2 < known.len() {
+            trace!(
+                "frame {frame}: {} of {} points fit",
+                inliers.len(),
+                known.len()
+            );
             return false;
         }
         let pose = refine_pose(&k, pose, &inliers, 10);
@@ -454,7 +540,16 @@ impl State<'_> {
     /// Bundle-adjusts the solve. `local` refines only the most recently
     /// added cameras and the points they see, holding every other camera
     /// that sees those points fixed; otherwise everything is refined.
-    fn adjust(&mut self, refine_focal: bool, local: bool) {
+    /// Whether refined intrinsics are believable: focal length within a
+    /// factor of 3 of the guess, distortion short of a fisheye's.
+    fn plausible(&self, k: &Intrinsics) -> bool {
+        let ratio = k.focal / self.input.focal;
+        (1.0 / 3.0..=3.0).contains(&ratio) && k.k1.abs() <= 1.0 && k.k2.abs() <= 1.0
+    }
+
+    /// `intrinsics` lets it refine what the input asks to (focal length,
+    /// distortion); otherwise they're held.
+    fn adjust(&mut self, intrinsics: bool, local: bool) {
         const LOCAL_WINDOW: usize = 10;
         let mut free = vec![!local; self.input.frame_count];
         if local {
@@ -518,11 +613,41 @@ impl State<'_> {
                 .filter(|(_, &f)| !free[f])
                 .map(|(i, _)| i)
                 .collect(),
-            refine_focal,
+            refine_focal: intrinsics && self.input.refine_focal,
+            refine_distortion: intrinsics && self.input.refine_distortion,
+            refine_k2: !self.k1_only,
+            // Stop once an iteration gains less than a millionth of the
+            // cost: far below what moves a camera visibly, and the last
+            // dozens of iterations otherwise go on such crumbs.
+            function_tolerance: 1e-6,
             ..BundleOptions::default()
         };
-        if bundle_adjust(&mut problem, &options).is_none() {
+        let start = problem.clone();
+        let Some(rep) = bundle_adjust(&mut problem, &options) else {
             return;
+        };
+        if !local {
+            trace!(
+                "global BA, {} frames: rms {:.3} -> {:.3} in {} steps, {:?}",
+                frames.len(),
+                rep.initial_rms,
+                rep.final_rms,
+                rep.iterations,
+                problem.intrinsics
+            );
+        }
+        if !self.plausible(&problem.intrinsics) {
+            // The intrinsics ran off somewhere no real lens is (an
+            // ill-conditioned shot); redo the adjustment without them.
+            problem = start;
+            let held = BundleOptions {
+                refine_focal: false,
+                refine_distortion: false,
+                ..options
+            };
+            if bundle_adjust(&mut problem, &held).is_none() {
+                return;
+            }
         }
         self.k = problem.intrinsics;
         for (i, &f) in frames.iter().enumerate() {
@@ -650,6 +775,9 @@ mod tests_support {
             tracks,
             focal: problem.intrinsics.focal,
             refine_focal: false,
+            k1: 0.0,
+            k2: 0.0,
+            refine_distortion: false,
         }
     }
 
@@ -702,7 +830,7 @@ mod tests_support {
 mod tests {
     use super::tests_support::*;
     use super::*;
-    use crate::synthetic::{dolly_scene, Rng};
+    use crate::synthetic::{dolly_scene, wide_dolly_scene, Rng};
     use nalgebra::Rotation3;
 
     #[test]
@@ -814,6 +942,30 @@ mod tests {
         assert_eq!(
             solve(&input(&tripod, tracks), &SolveOptions::default()).unwrap_err(),
             SolveError::NoInitialPair
+        );
+    }
+
+    #[test]
+    fn solves_through_a_distorting_lens() {
+        let truth = wide_dolly_scene(40, 150, 0.2, 41);
+        let mut job = input(&truth, tracks_of(&truth));
+        job.refine_focal = true;
+        job.refine_distortion = true;
+        let solution = solve(&job, &SolveOptions::default()).unwrap();
+        assert!(solution.rms < 0.2 * 2f64.sqrt(), "rms {}", solution.rms);
+        assert_eq!(solution.poses.iter().flatten().count(), 40);
+        let k = solution.intrinsics;
+        assert!((k.k1 - truth.intrinsics.k1).abs() < 0.03, "{k:?}");
+
+        // A pinhole solve of the same tracks fits worse.
+        job.refine_distortion = false;
+        let pinhole = solve(&job, &SolveOptions::default()).unwrap();
+        // (Moving the points absorbs some of the distortion, so the gap is
+        // smaller than the 8% at the corners suggests.)
+        assert!(
+            pinhole.rms > 1.5 * solution.rms,
+            "pinhole rms {}",
+            pinhole.rms
         );
     }
 

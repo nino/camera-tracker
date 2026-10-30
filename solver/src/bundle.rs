@@ -1,12 +1,12 @@
 //! Bundle adjustment: refines camera poses, 3D points and (optionally) the
-//! focal length to minimise squared reprojection error, with
-//! Levenberg–Marquardt.
+//! focal length and radial distortion to minimise squared reprojection
+//! error, with Levenberg–Marquardt.
 //!
 //! Each step solves the damped normal equations through the Schur complement
 //! on the points: every point only touches its own 3×3 block, so the points
 //! are eliminated first and only the (much smaller) camera system is solved
-//! densely. That system is 6 values per free camera plus one for the focal
-//! length. Dense is fine for a few hundred cameras; a sparse solver can
+//! densely. That system is 6 values per free camera plus up to three shared
+//! intrinsics (focal length, k1, k2). Dense is fine for a few hundred cameras; a sparse solver can
 //! replace it later without changing the interface.
 //!
 //! Gauge: a reconstruction is only defined up to a similarity transform. The
@@ -17,7 +17,7 @@
 
 use nalgebra::{DMatrix, DVector, Matrix3, Rotation3, SMatrix, Vector2, Vector3};
 
-use crate::camera::{projection_jacobian, Intrinsics, Pose, MIN_DEPTH};
+use crate::camera::{project_camera, Intrinsics, Pose};
 
 /// One 2D track position: `pixel` is where `point` appears in `camera`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,6 +42,9 @@ pub struct Options {
     pub fixed_cameras: Vec<usize>,
     /// Also refine the focal length (shared by all cameras).
     pub refine_focal: bool,
+    /// Also refine the radial distortion: k1, and k2 too if `refine_k2`.
+    pub refine_distortion: bool,
+    pub refine_k2: bool,
     /// Stop when an accepted step lowers the cost by less than this fraction.
     pub function_tolerance: f64,
     /// Stop when a step moves the parameters by less than this, relative to
@@ -55,6 +58,8 @@ impl Default for Options {
             max_iterations: 100,
             fixed_cameras: vec![0],
             refine_focal: false,
+            refine_distortion: false,
+            refine_k2: true,
             function_tolerance: 1e-12,
             step_tolerance: 1e-12,
         }
@@ -87,18 +92,15 @@ fn cost(problem: &Problem) -> Option<f64> {
     let mut sum = 0.0;
     for obs in &problem.observations {
         let p = problem.poses[obs.camera].to_camera(&problem.points[obs.point]);
-        if p.z <= MIN_DEPTH {
-            return None;
-        }
-        let k = &problem.intrinsics;
-        let r = Vector2::new(k.focal * p.x / p.z + k.cx, k.focal * p.y / p.z + k.cy) - obs.pixel;
+        let r = project_camera(&problem.intrinsics, &p)? - obs.pixel;
         sum += r.norm_squared();
     }
     Some(sum)
 }
 
-/// Camera-side parameters per observation: 3 rotation, 3 translation, focal.
-const CAM: usize = 7;
+/// Camera-side parameters per observation: 3 rotation, 3 translation, then
+/// the shared intrinsics focal, k1, k2.
+const CAM: usize = 9;
 type CameraJacobian = SMatrix<f64, 2, CAM>;
 type PointJacobian = SMatrix<f64, 2, 3>;
 type CameraPointBlock = SMatrix<f64, CAM, 3>;
@@ -119,10 +121,11 @@ struct Linearised {
     columns: Vec<Columns>,
 }
 
-/// Parameter layout: free cameras get 6 consecutive slots, then the focal.
+/// Parameter layout: free cameras get 6 consecutive slots, then the refined
+/// intrinsics (focal, k1, k2), so their rows come after every camera's.
 struct Layout {
     camera_offset: Vec<Option<usize>>,
-    focal: Option<usize>,
+    intrinsics: [Option<usize>; 3],
     size: usize,
 }
 
@@ -139,13 +142,20 @@ impl Layout {
                 }
             })
             .collect();
-        let focal = options.refine_focal.then(|| {
-            size += 1;
-            size - 1
-        });
+        let mut slot = |on: bool| {
+            on.then(|| {
+                size += 1;
+                size - 1
+            })
+        };
+        let intrinsics = [
+            slot(options.refine_focal),
+            slot(options.refine_distortion),
+            slot(options.refine_distortion && options.refine_k2),
+        ];
         Self {
             camera_offset,
-            focal,
+            intrinsics,
             size,
         }
     }
@@ -157,7 +167,7 @@ impl Layout {
                 *col = Some(offset + k);
             }
         }
-        cols[6] = self.focal;
+        cols[6..].copy_from_slice(&self.intrinsics);
         cols
     }
 }
@@ -181,16 +191,16 @@ fn linearise(problem: &Problem, layout: &Layout) -> Linearised {
         let pose = &problem.poses[obs.camera];
         let rotated = pose.rotation * problem.points[obs.point];
         let p = rotated + pose.translation;
-        let r = Vector2::new(k.focal * p.x / p.z + k.cx, k.focal * p.y / p.z + k.cy) - obs.pixel;
-        let jproj = projection_jacobian(k.focal, &p);
+        let r = k.to_pixel(&Vector2::new(p.x / p.z, p.y / p.z)) - obs.pixel;
+        let jproj = k.point_jacobian(&p);
 
         // Rotation is updated on the left, R ← exp(δ)·R, so ∂p/∂δ = −[R·X]×.
         let mut jc = CameraJacobian::zeros();
         jc.fixed_view_mut::<2, 3>(0, 0)
             .copy_from(&(jproj * -skew(&rotated)));
         jc.fixed_view_mut::<2, 3>(0, 3).copy_from(&jproj);
-        jc[(0, 6)] = p.x / p.z;
-        jc[(1, 6)] = p.y / p.z;
+        jc.fixed_view_mut::<2, 3>(0, 6)
+            .copy_from(&k.intrinsics_jacobian(&p));
         let jp: PointJacobian = jproj * pose.rotation.matrix();
 
         let cols = layout.columns(obs.camera);
@@ -215,8 +225,8 @@ fn linearise(problem: &Problem, layout: &Layout) -> Linearised {
 
 /// Subtracts the Schur block for the observation pair (a, b) and its mirror
 /// (b, a) from the lower triangle of `s`. `block` is Wa·V⁻¹·Wbᵀ. Camera
-/// columns are 6 contiguous slots per camera; the focal slot (if any) comes
-/// after every camera, so its row is always in the lower triangle.
+/// columns are 6 contiguous slots per camera; the intrinsics' slots (if
+/// any) come after every camera.
 fn subtract_lower(
     s: &mut DMatrix<f64>,
     ca: &Columns,
@@ -253,26 +263,32 @@ fn subtract_lower(
             }
         }
     }
-    if let Some(f) = ca[6] {
-        // Row f, camera columns: (a, b) contributes block[6, ·] at b's
-        // camera, and the mirror (b, a) contributes block[·, 6] at a's.
-        if let Some(ob) = ob {
-            for j in 0..6 {
-                s[(f, ob + j)] -= block[(6, j)];
-            }
-        }
-        if !same {
-            if let Some(oa) = oa {
-                for j in 0..6 {
-                    s[(f, oa + j)] -= block[(j, 6)];
+    // Rows of the shared intrinsics come after every camera's, so their
+    // entries against camera columns are in the lower triangle; among
+    // themselves, keep row ≥ column. The pair (a, b) adds block[i, j] at
+    // (a's column i, b's column j), and its mirror (b, a) the same value at
+    // (b's column j, a's column i).
+    for i in 6..CAM {
+        let Some(row) = ca[i] else { continue };
+        for j in 0..CAM {
+            if let Some(col) = cb[j] {
+                if row >= col {
+                    s[(row, col)] -= block[(i, j)];
                 }
             }
         }
-        s[(f, f)] -= if same {
-            block[(6, 6)]
-        } else {
-            2.0 * block[(6, 6)]
-        };
+    }
+    if !same {
+        for j in 6..CAM {
+            let Some(row) = cb[j] else { continue };
+            for i in 0..CAM {
+                if let Some(col) = ca[i] {
+                    if row >= col {
+                        s[(row, col)] -= block[(i, j)];
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -300,7 +316,7 @@ fn solve_step(
         let mut v = lin.v[i];
         damp(&mut v);
         let inv = v.try_inverse()?;
-        // Observations on fixed cameras (with no focal) add nothing to the
+        // Observations on fixed cameras (with no intrinsics) add nothing to the
         // camera system; skipping them matters for local adjustments.
         free_obs.clear();
         free_obs.extend(
@@ -361,8 +377,15 @@ fn apply(problem: &Problem, layout: &Layout, dc: &DVector<f64>, dp: &[Vector3<f6
             pose.translation += Vector3::new(dc[o + 3], dc[o + 4], dc[o + 5]);
         }
     }
-    if let Some(f) = layout.focal {
-        next.intrinsics.focal += dc[f];
+    let [focal, k1, k2] = layout.intrinsics;
+    if let Some(i) = focal {
+        next.intrinsics.focal += dc[i];
+    }
+    if let Some(i) = k1 {
+        next.intrinsics.k1 += dc[i];
+    }
+    if let Some(i) = k2 {
+        next.intrinsics.k2 += dc[i];
     }
     for (point, delta) in next.points.iter_mut().zip(dp) {
         *point += delta;
@@ -452,7 +475,7 @@ pub fn bundle_adjust(problem: &mut Problem, options: &Options) -> Option<Report>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::{dolly_scene, perturb};
+    use crate::synthetic::{dolly_scene, perturb, wide_dolly_scene};
 
     /// Scale that best maps estimated camera centres onto the true ones,
     /// measured from camera 0 (fixed, so shared by both).
@@ -541,6 +564,116 @@ mod tests {
         est.intrinsics.focal *= 1.1;
         let fixed = bundle_adjust(&mut est, &Options::default()).unwrap();
         assert!(fixed.final_rms > report.final_rms, "{fixed:?}");
+    }
+
+    /// The Schur-complement step equals solving the full damped normal
+    /// equations densely (built from the same Jacobians).
+    #[test]
+    fn schur_step_matches_the_dense_solve() {
+        let truth = wide_dolly_scene(5, 12, 0.5, 3);
+        let est = perturb(&truth, 0.01, 0.02, 0.05, 4);
+        let options = Options {
+            refine_focal: true,
+            refine_distortion: true,
+            fixed_cameras: vec![0],
+            ..Options::default()
+        };
+        let layout = Layout::new(&est, &options);
+        let mut by_point = vec![Vec::new(); est.points.len()];
+        for (o, obs) in est.observations.iter().enumerate() {
+            by_point[obs.point].push(o);
+        }
+        let lin = linearise(&est, &layout);
+        let lambda = 1e-3;
+        let (dc, dp) = solve_step(&lin, &by_point, lambda).unwrap();
+
+        // Dense: camera-side columns first, then 3 per point.
+        let nc = layout.size;
+        let n = nc + 3 * est.points.len();
+        let mut jtj = DMatrix::<f64>::zeros(n, n);
+        let mut jtr = DVector::<f64>::zeros(n);
+        let k = est.intrinsics;
+        for obs in &est.observations {
+            let pose = &est.poses[obs.camera];
+            let rotated = pose.rotation * est.points[obs.point];
+            let p = rotated + pose.translation;
+            let r = k.to_pixel(&Vector2::new(p.x / p.z, p.y / p.z)) - obs.pixel;
+            let jproj = k.point_jacobian(&p);
+            let mut row = DMatrix::<f64>::zeros(2, n);
+            let cols = layout.columns(obs.camera);
+            let mut jc = CameraJacobian::zeros();
+            jc.fixed_view_mut::<2, 3>(0, 0)
+                .copy_from(&(jproj * -skew(&rotated)));
+            jc.fixed_view_mut::<2, 3>(0, 3).copy_from(&jproj);
+            jc.fixed_view_mut::<2, 3>(0, 6)
+                .copy_from(&k.intrinsics_jacobian(&p));
+            for (a, col) in cols.iter().enumerate() {
+                if let Some(c) = col {
+                    for i in 0..2 {
+                        row[(i, *c)] += jc[(i, a)];
+                    }
+                }
+            }
+            let jp = jproj * pose.rotation.matrix();
+            for i in 0..2 {
+                for j in 0..3 {
+                    row[(i, nc + 3 * obs.point + j)] = jp[(i, j)];
+                }
+            }
+            jtj += row.transpose() * &row;
+            jtr += row.transpose() * DVector::from_column_slice(r.as_slice());
+        }
+        for d in 0..n {
+            jtj[(d, d)] += lambda * jtj[(d, d)] + 1e-12;
+        }
+        let dense = -jtj.cholesky().unwrap().solve(&jtr);
+        for i in 0..nc {
+            assert!(
+                (dense[i] - dc[i]).abs() < 1e-6 * (1.0 + dense[i].abs()),
+                "camera {i}: {} vs {}",
+                dense[i],
+                dc[i]
+            );
+        }
+        for (pi, d) in dp.iter().enumerate() {
+            for j in 0..3 {
+                let e = dense[nc + 3 * pi + j];
+                assert!((e - d[j]).abs() < 1e-6 * (1.0 + e.abs()), "point {pi}");
+            }
+        }
+    }
+
+    #[test]
+    fn refines_lens_distortion() {
+        let truth = wide_dolly_scene(20, 120, 0.2, 9);
+        let mut est = perturb(&truth, 0.005, 0.02, 0.03, 10);
+        est.intrinsics.k1 = 0.0;
+        est.intrinsics.k2 = 0.0;
+        let options = Options {
+            refine_focal: true,
+            refine_distortion: true,
+            ..Options::default()
+        };
+        let report = bundle_adjust(&mut est, &options).unwrap();
+        assert!(report.final_rms < 0.2 * 2f64.sqrt(), "{report:?}");
+        let k = est.intrinsics;
+        // Focal length and distortion trade off a little against depth on
+        // a dolly shot, so k1 comes back close rather than exact.
+        assert!((k.k1 - truth.intrinsics.k1).abs() < 0.02, "{k:?}");
+
+        // Without distortion, the same tracks can't be fitted.
+        let mut flat = perturb(&truth, 0.005, 0.02, 0.03, 10);
+        flat.intrinsics.k1 = 0.0;
+        flat.intrinsics.k2 = 0.0;
+        let pinhole = bundle_adjust(
+            &mut flat,
+            &Options {
+                refine_focal: true,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        assert!(pinhole.final_rms > 1.5 * report.final_rms, "{pinhole:?}");
     }
 
     #[test]

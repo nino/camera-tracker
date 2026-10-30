@@ -332,6 +332,8 @@ describe("FrameViewer", () => {
          const solution: Solution = {
             status: "solved",
             focal: 200,
+            k1: 0,
+            k2: 0,
             rms: 0.25,
             keyframes: [0, 4],
             cameras: [0, 4].map((frame) => ({

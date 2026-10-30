@@ -2,7 +2,7 @@
  * The solver's JSON format (solver/src/api.rs). Positions are in display
  * pixels, as in tracking/tracks.ts. Cameras are world-to-camera
  * (`p = R X + t`) with x right, y down and z forward; the first keyframe's
- * camera sits at the origin.
+ * camera sits at the origin. Pixels include lens distortion (see `k1`).
  */
 
 export interface SolveRequest {
@@ -12,6 +12,10 @@ export interface SolveRequest {
    /** Focal length guess, pixels. */
    readonly focal: number;
    readonly refineFocal: boolean;
+   /** Radial distortion guess (solver/src/camera.rs); 0 for none. */
+   readonly k1: number;
+   readonly k2: number;
+   readonly refineDistortion: boolean;
    readonly tracks: readonly {
       readonly id: number;
       /** `[frame, x, y]`, one per keyed frame. */
@@ -41,6 +45,13 @@ export interface Solution {
    readonly status: "solved";
    /** Focal length, pixels (refined if asked). */
    readonly focal: number;
+   /**
+    * Radial distortion, Blender's polynomial model: a normalised point
+    * (x, y) = (X/Z, Y/Z) lands at f·d·(x, y) + centre, with
+    * d = 1 + k1·r² + k2·r⁴. Negative k1 is barrel distortion.
+    */
+   readonly k1: number;
+   readonly k2: number;
    /** RMS reprojection error over all inlier keys, pixels. */
    readonly rms: number;
    readonly keyframes: readonly [number, number];

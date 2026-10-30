@@ -29,6 +29,8 @@ const identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 const solved: Solution = {
    status: "solved",
    focal: 640,
+   k1: 0,
+   k2: 0,
    rms: 0.4321,
    keyframes: [0, 2],
    cameras: [0, 1, 2].map((frame) => ({
@@ -91,6 +93,7 @@ describe("SolvePanel", () => {
          target: { value: "18" },
       });
       fireEvent.click(screen.getByLabelText("Refine focal length"));
+      fireEvent.click(screen.getByLabelText("Refine lens distortion"));
       fireEvent.click(screen.getByRole("button", { name: "Solve camera" }));
       expect(calls).toHaveLength(1);
       expect(calls[0].request).toMatchObject({
@@ -98,6 +101,7 @@ describe("SolvePanel", () => {
          frameCount: 4,
          focal: 320,
          refineFocal: false,
+         refineDistortion: true,
       });
       expect(calls[0].request.tracks).toHaveLength(3);
       expect(screen.getByRole("status")).toHaveTextContent("Solving…");
@@ -124,6 +128,18 @@ describe("SolvePanel", () => {
       clickCamera(solved, 2);
       expect(onSeek).toHaveBeenCalledWith(2);
       expect(screen.getByTestId("current-camera")).toBeInTheDocument();
+   });
+
+   it("shows the solved distortion", async () => {
+      const { calls, solve } = controlledSolver();
+      renderPanel(solve);
+      fireEvent.click(screen.getByRole("button", { name: "Solve camera" }));
+      await act(async () =>
+         calls[0].resolve({ ...solved, k1: -0.1234, k2: 0.02 }),
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+         "(640 px) · distortion k1 -0.123, k2 0.020 · 2 of 3 tracks",
+      );
    });
 
    it("shows why a solve failed", async () => {

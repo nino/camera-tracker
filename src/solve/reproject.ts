@@ -1,14 +1,21 @@
 import type { Point } from "../tracking/tracks";
 import type { Solution, SolvedCamera, Vec3 } from "./solve-types";
 
+export interface Lens {
+   readonly focal: number;
+   readonly k1: number;
+   readonly k2: number;
+}
+
 /**
  * Where the solve puts a 3D point in a frame, in display pixels: the
- * solver's pinhole model with the principal point at the frame's centre
- * (solver/src/camera.rs). Null for a point behind the camera.
+ * solver's camera model (solver/src/camera.rs), a pinhole with radial
+ * distortion and the principal point at the frame's centre. Null for a
+ * point behind the camera.
  */
 export function project(
    camera: SolvedCamera,
-   focal: number,
+   lens: Lens,
    width: number,
    height: number,
    X: Vec3,
@@ -21,10 +28,11 @@ export function project(
    if (p[2] <= 1e-9) {
       return null;
    }
-   return {
-      x: (focal * p[0]) / p[2] + width / 2,
-      y: (focal * p[1]) / p[2] + height / 2,
-   };
+   const x = p[0] / p[2];
+   const y = p[1] / p[2];
+   const r2 = x * x + y * y;
+   const scale = lens.focal * (1 + r2 * (lens.k1 + lens.k2 * r2));
+   return { x: scale * x + width / 2, y: scale * y + height / 2 };
 }
 
 export interface Reprojection {
@@ -45,7 +53,7 @@ export function reprojections(
    }
    const out: Reprojection[] = [];
    for (const p of solution.points) {
-      const point = project(camera, solution.focal, width, height, p.position);
+      const point = project(camera, solution, width, height, p.position);
       if (point != null) {
          out.push({ id: p.id, point });
       }

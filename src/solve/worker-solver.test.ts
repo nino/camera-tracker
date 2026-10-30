@@ -25,6 +25,9 @@ const request: SolveRequest = {
    frameCount: 3,
    focal: 600,
    refineFocal: true,
+   k1: 0,
+   k2: 0,
+   refineDistortion: false,
    tracks: [],
 };
 

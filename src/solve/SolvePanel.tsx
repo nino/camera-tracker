@@ -55,6 +55,9 @@ export function SolvePanel({
 }: SolvePanelProps) {
    const [focalMm, setFocalMm] = React.useState(DEFAULT_FOCAL_MM);
    const [refineFocal, setRefineFocal] = React.useState(true);
+   // Off by default: most footage is fine without it, and it needs tracks
+   // that cross the frame to pin it down.
+   const [refineDistortion, setRefineDistortion] = React.useState(false);
    const [run, setRun] = React.useState<Run>({ status: "idle" });
    // The running solve, cancelled if the panel goes away.
    const controllerRef = React.useRef<AbortController | null>(null);
@@ -68,7 +71,7 @@ export function SolvePanel({
       const request = solveRequest(
          tracks,
          { width, height, frameCount },
-         { focalMm, refineFocal },
+         { focalMm, refineFocal, refineDistortion },
       );
       const solvedTracks = tracks.tracks;
       setRun({ status: "running", controller });
@@ -131,6 +134,15 @@ export function SolvePanel({
                   disabled={running}
                />{" "}
                Refine focal length
+            </label>
+            <label>
+               <input
+                  type="checkbox"
+                  checked={refineDistortion}
+                  onChange={(e) => setRefineDistortion(e.currentTarget.checked)}
+                  disabled={running}
+               />{" "}
+               Refine lens distortion
             </label>
             {running ? (
                <button type="button" onClick={() => run.controller.abort()}>
@@ -210,8 +222,10 @@ function SolveResult({
          <p className="solve-summary" role="status">
             Solved {response.cameras.length} of {frameCount} frames · error{" "}
             {response.rms.toFixed(2)} px · focal {mm.toFixed(1)} mm (
-            {Math.round(response.focal)} px) · {response.points.length} of{" "}
-            {run.trackCount} tracks
+            {Math.round(response.focal)} px)
+            {(response.k1 !== 0 || response.k2 !== 0) &&
+               ` · distortion k1 ${response.k1.toFixed(3)}, k2 ${response.k2.toFixed(3)}`}{" "}
+            · {response.points.length} of {run.trackCount} tracks
             {outliers > 0 &&
                ` · ${outliers} outlier ${outliers === 1 ? "key" : "keys"}`}
          </p>

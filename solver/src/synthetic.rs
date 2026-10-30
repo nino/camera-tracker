@@ -14,12 +14,43 @@ pub const HEIGHT: f64 = 360.0;
 /// 4–8 units in front. Observations are the projections that land inside the
 /// frame, plus Gaussian noise of `noise` pixels.
 pub fn dolly_scene(cameras: usize, points: usize, noise: f64, seed: u64) -> Problem {
+    dolly_scene_through(
+        Intrinsics::centred(800.0, WIDTH, HEIGHT),
+        0.0,
+        cameras,
+        points,
+        noise,
+        seed,
+    )
+}
+
+/// A dolly with a pan through a wide lens with barrel distortion: 24 mm
+/// equivalent (focal 427 px across 640) with k1 = −0.2, k2 = 0.05, which
+/// pulls the frame's corners in by about 8%. The pan sweeps points across
+/// the frame; without it, moving the points could hide the distortion.
+pub fn wide_dolly_scene(cameras: usize, points: usize, noise: f64, seed: u64) -> Problem {
+    let intrinsics = Intrinsics {
+        k1: -0.2,
+        k2: 0.05,
+        ..Intrinsics::centred(427.0, WIDTH, HEIGHT)
+    };
+    dolly_scene_through(intrinsics, 2.5, cameras, points, noise, seed)
+}
+
+/// `pan`: the cameras turn from looking at x = −pan to x = +pan.
+fn dolly_scene_through(
+    intrinsics: Intrinsics,
+    pan: f64,
+    cameras: usize,
+    points: usize,
+    noise: f64,
+    seed: u64,
+) -> Problem {
     let mut rng = Rng::new(seed);
-    let intrinsics = Intrinsics::centred(800.0, WIDTH, HEIGHT);
     let world_points: Vec<Vector3<f64>> = (0..points)
         .map(|_| {
             Vector3::new(
-                rng.range(-2.0, 2.0),
+                rng.range(-2.0 - pan, 2.0 + pan),
                 rng.range(-1.2, 1.2),
                 rng.range(4.0, 8.0),
             )
@@ -29,7 +60,7 @@ pub fn dolly_scene(cameras: usize, points: usize, noise: f64, seed: u64) -> Prob
         .map(|c| {
             let s = c as f64 / (cameras.max(2) - 1) as f64;
             let centre = Vector3::new(-1.0 + 2.0 * s, 0.2 * (s * 3.0).sin(), 0.5 * s);
-            let target = Vector3::new(0.3 * s, 0.0, 6.0);
+            let target = Vector3::new(0.3 * s + pan * (2.0 * s - 1.0), 0.0, 6.0);
             Pose::look_at(centre, target, Vector3::new(0.05 * s, 1.0, 0.0))
         })
         .collect();
