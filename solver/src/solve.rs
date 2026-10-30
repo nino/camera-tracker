@@ -69,6 +69,9 @@ pub struct SolveOptions {
     /// `min_parallax`: handheld shots rarely have more between two frames.
     pub min_start_parallax: f64,
     pub ransac_iterations: usize,
+    /// RANSAC samples when registering a frame. 0 leaves only the
+    /// neighbouring frames' poses as starting points (for tests).
+    pub register_samples: usize,
     pub seed: u64,
 }
 
@@ -79,6 +82,7 @@ impl Default for SolveOptions {
             min_parallax: 0.25f64.to_radians(),
             min_start_parallax: 0.2f64.to_radians(),
             ransac_iterations: 500,
+            register_samples: 500,
             seed: 1,
         }
     }
@@ -180,7 +184,26 @@ pub fn solve(input: &SolveInput, options: &SolveOptions) -> Result<Solution, Sol
     state.fixed_frame = keyframes.0;
 
     let mut last_global = 2;
-    while let Some(frame) = state.next_frame() {
+    let mut rescued_at = 0;
+    loop {
+        let Some(frame) = state.next_frame() else {
+            // Stuck. Bad positions and drift that piled up since the last
+            // full adjustment can be what stops the next frames fitting,
+            // so clean up and try every failed frame again, as long as
+            // that keeps adding frames.
+            if state.order.len() == rescued_at || state.failed.iter().all(Option::is_none) {
+                break;
+            }
+            rescued_at = state.order.len();
+            trace!("stuck at {} frames: cleaning up and retrying", rescued_at);
+            state.adjust(false, false);
+            if state.reject_outliers() > 0 {
+                state.adjust(false, false);
+            }
+            state.triangulate_new();
+            state.failed.fill(None);
+            continue;
+        };
         if !state.register(frame) {
             state.failed[frame] = Some(state.seen_points(frame));
             continue;
@@ -195,6 +218,11 @@ pub fn solve(input: &SolveInput, options: &SolveOptions) -> Result<Solution, Sol
         if solved >= last_global + last_global / 2 {
             state.k1_only = true;
             state.adjust(solved >= MIN_CAMERAS_FOR_INTRINSICS, false);
+            // Bad positions left in pull the newest cameras off, and the
+            // frames after them then fail to register.
+            if state.reject_outliers() > 0 {
+                state.adjust(false, false);
+            }
             state.k1_only = false;
             last_global = solved;
         } else {
@@ -373,7 +401,8 @@ impl State<'_> {
     }
 
     /// The unsolved frame that sees the most solved points (at least 6). A
-    /// frame that failed is tried again once it sees a quarter more.
+    /// frame that failed is tried again once it sees a quarter more, or
+    /// once a neighbouring frame is solved.
     fn next_frame(&self) -> Option<usize> {
         (0..self.input.frame_count)
             .filter(|&f| self.poses[f].is_none())
@@ -404,7 +433,7 @@ impl State<'_> {
         // re-scored at the real threshold (locally optimised RANSAC).
         let loose = 4.0 * self.options.outlier_px;
         let mut best: Option<(Pose, usize)> = None;
-        let mut needed = self.options.ransac_iterations;
+        let mut needed = self.options.register_samples;
         let mut tried = 0;
         while tried < needed {
             tried += 1;
@@ -423,33 +452,69 @@ impl State<'_> {
                 best = Some((pose, count));
             }
         }
-        let Some((mut pose, _)) = best else {
-            return false;
-        };
-        let mut tolerance = loose;
-        for _ in 0..4 {
+        // Video moves smoothly, so the poses of the nearest solved frames
+        // (and their motion carried on one frame) are good starting points
+        // too. They matter when the points are far and nearly planar, where
+        // a pose from 6 points is too unstable to find the inliers.
+        let mut seeds: Vec<(Pose, f64)> = best.map(|(p, _)| (p, loose)).into_iter().collect();
+        for step in [-1i64, 1] {
+            let near = |d: i64| {
+                usize::try_from(frame as i64 + step * d)
+                    .ok()
+                    .and_then(|f| *self.poses.get(f)?)
+            };
+            if let Some(a) = near(1) {
+                seeds.push((a, 8.0 * loose));
+                if let Some(b) = near(2) {
+                    seeds.push((extrapolate(&b, &a), 2.0 * loose));
+                }
+            }
+        }
+        let mut chosen: Option<(Pose, Vec<Correspondence>)> = None;
+        for (seed, start) in seeds {
+            let mut pose = seed;
+            let mut tolerance = start;
+            let mut ok = true;
+            while ok {
+                let inliers: Vec<_> = known
+                    .iter()
+                    .filter(|o| within(&pose, o, tolerance))
+                    .copied()
+                    .collect();
+                if inliers.len() < 6 {
+                    trace!(
+                        "frame {frame}: seed from {start} lost at {tolerance} with {}",
+                        inliers.len()
+                    );
+                    ok = false;
+                } else {
+                    pose = refine_pose(&k, pose, &inliers, 10);
+                    if tolerance <= self.options.outlier_px {
+                        break;
+                    }
+                    tolerance = (tolerance / 2.0).max(self.options.outlier_px);
+                }
+            }
+            if !ok {
+                continue;
+            }
             let inliers: Vec<_> = known
                 .iter()
-                .filter(|o| within(&pose, o, tolerance))
+                .filter(|o| within(&pose, o, self.options.outlier_px))
                 .copied()
                 .collect();
-            if inliers.len() < 6 {
-                trace!(
-                    "frame {frame}: {} of {} points fit",
-                    inliers.len(),
-                    known.len()
-                );
-                return false;
+            if chosen
+                .as_ref()
+                .is_none_or(|(_, best)| inliers.len() > best.len())
+            {
+                chosen = Some((pose, inliers));
             }
-            pose = refine_pose(&k, pose, &inliers, 10);
-            tolerance = (tolerance / 2.0).max(self.options.outlier_px);
         }
-        let inliers: Vec<_> = known
-            .iter()
-            .filter(|o| within(&pose, o, self.options.outlier_px))
-            .copied()
-            .collect();
-        if inliers.len() < 6 || inliers.len() * 2 < known.len() {
+        let Some((pose, inliers)) = chosen else {
+            trace!("frame {frame}: no pose fits 6 of {} points", known.len());
+            return false;
+        };
+        if inliers.len() < 6 || inliers.len() * 3 < known.len() {
             trace!(
                 "frame {frame}: {} of {} points fit",
                 inliers.len(),
@@ -460,6 +525,12 @@ impl State<'_> {
         let pose = refine_pose(&k, pose, &inliers, 10);
         self.poses[frame] = Some(pose);
         self.order.push(frame);
+        // A neighbour that failed can now start from this pose.
+        for f in [frame.wrapping_sub(1), frame + 1] {
+            if let Some(failed) = self.failed.get_mut(f) {
+                *failed = None;
+            }
+        }
         true
     }
 
@@ -537,9 +608,6 @@ impl State<'_> {
         }
     }
 
-    /// Bundle-adjusts the solve. `local` refines only the most recently
-    /// added cameras and the points they see, holding every other camera
-    /// that sees those points fixed; otherwise everything is refined.
     /// Whether refined intrinsics are believable: focal length within a
     /// factor of 3 of the guess, distortion short of a fisheye's.
     fn plausible(&self, k: &Intrinsics) -> bool {
@@ -547,6 +615,9 @@ impl State<'_> {
         (1.0 / 3.0..=3.0).contains(&ratio) && k.k1.abs() <= 1.0 && k.k2.abs() <= 1.0
     }
 
+    /// Bundle-adjusts the solve. `local` refines only the most recently
+    /// added cameras and the points they see, holding every other camera
+    /// that sees those points fixed; otherwise everything is refined.
     /// `intrinsics` lets it refine what the input asks to (focal length,
     /// distortion); otherwise they're held.
     fn adjust(&mut self, intrinsics: bool, local: bool) {
@@ -729,6 +800,18 @@ impl State<'_> {
 /// RANSAC iterations needed to draw at least one all-inlier sample of `k`
 /// with 99.9% probability, given the best inlier count so far (adaptive
 /// termination: few iterations when nearly everything is an inlier).
+/// A solved point and where a frame sees it.
+type Correspondence = (Vector3<f64>, Vector2<f64>);
+
+/// The pose one frame on from `a`, moving as it did from `b` to `a`.
+fn extrapolate(b: &Pose, a: &Pose) -> Pose {
+    let turn = a.rotation * b.rotation.inverse();
+    Pose {
+        rotation: turn * a.rotation,
+        translation: turn * a.translation + (a.translation - turn * b.translation),
+    }
+}
+
 fn ransac_iterations_for(inliers: usize, total: usize, k: usize) -> usize {
     let w = inliers as f64 / total.max(1) as f64;
     let all_inliers = w.powi(k as i32);
@@ -907,6 +990,45 @@ mod tests {
         let solved = solution.poses.iter().flatten().count();
         assert!(solved >= 28, "{solved} frames solved");
         assert!(centre_error(&truth, &solution) < 0.02);
+    }
+
+    #[test]
+    fn registers_frames_from_their_neighbours() {
+        // With no RANSAC samples, each frame can only start from the poses
+        // of the frames next to it, so the solve has to grow outwards from
+        // the starting pair, retrying frames as their neighbours are solved.
+        let truth = dolly_scene(30, 120, 0.2, 51);
+        let options = SolveOptions {
+            register_samples: 0,
+            ..SolveOptions::default()
+        };
+        let solution = solve(&input(&truth, tracks_of(&truth)), &options).unwrap();
+        let solved = solution.poses.iter().flatten().count();
+        assert_eq!(solved, 30);
+        assert!(centre_error(&truth, &solution) < 0.02);
+    }
+
+    #[test]
+    fn extrapolates_a_steady_move() {
+        let pose = |s: f64| {
+            Pose::look_at(
+                Vector3::new(s, 0.1 * s, 0.3 * s),
+                Vector3::new(0.2 * s, 0.0, 6.0),
+                Vector3::y(),
+            )
+        };
+        // A steady move: each step is the same rotation and translation.
+        let step = |p: &Pose| Pose {
+            rotation: Rotation3::from_euler_angles(0.01, -0.02, 0.005) * p.rotation,
+            translation: Rotation3::from_euler_angles(0.01, -0.02, 0.005) * p.translation
+                + Vector3::new(0.1, -0.05, 0.02),
+        };
+        let a = pose(0.5);
+        let b = step(&a);
+        let c = step(&b);
+        let next = extrapolate(&a, &b);
+        assert!((next.rotation.matrix() - c.rotation.matrix()).norm() < 1e-12);
+        assert!((next.translation - c.translation).norm() < 1e-12);
     }
 
     #[test]
